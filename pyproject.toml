@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sam_globus_keepup"
+version = "1.0.0"
+dependencies = [
+  "ifdhc>2.7.2",
+  "sam-web-client>3.6",
+]
+
+requires-python = ">=3.8"
+
+description = ""
+readme = "README.md"
+keywords = []
+classifiers = [
+  "Programming Language :: Python"
+]
