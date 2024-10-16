@@ -13,6 +13,9 @@ from typing import Optional
 import ifdh
 import samweb_client
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class SAMProjectManager:
     """ContextManager for running a SAM project."""
