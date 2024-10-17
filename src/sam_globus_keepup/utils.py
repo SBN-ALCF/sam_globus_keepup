@@ -5,6 +5,7 @@ Utility functions
 import os
 import pathlib
 import subprocess
+from typing import Optional
 
 
 BLOCK_SIZE = 1024
@@ -31,3 +32,18 @@ def df(path: pathlib.Path) -> int:
 
     result = os.statvfs(path)
     return result.f_frsize * result.f_bfree // BLOCK_SIZE
+
+
+def check_env(var: str, val: Optional[str]=None) -> None:
+    """Raise if environment variable var is not equal to val."""
+    eq_str = f'={val}'
+
+    if var in os.environ:
+        if val is None:
+            # any value OK
+            return
+
+        if os.environ[var] == str(val):
+            return
+    
+    raise RuntimeError(f"Must set {var}{eq_str} environment variable.")

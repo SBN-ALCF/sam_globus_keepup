@@ -1,21 +1,14 @@
 #!/usr/bin/env python
 
-"""
-Copies new files from dCache to this node using ifdh, then sends them to
-Polaris at ALCF via GLOBUS
-"""
-
 import sys
 import os
 import pathlib
+import logging
 
 from sam_globus_keepup import EXPERIMENT
 from sam_globus_keepup.sam import SAMProjectManager
 from sam_globus_keepup.const import SBND_RAWDATA_REGEXP
 from sam_globus_keepup.utils import run_path
-
-import logging
-logger = logging.getLogger(__name__)
 
 
 DATASET = "sbnd_keepup_from_17200_raw_Oct14"
