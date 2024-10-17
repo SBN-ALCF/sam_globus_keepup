@@ -144,3 +144,9 @@ class GLOBUSSessionManager:
         logger.info(f"Waiting on {task_id=}")
         while not self.client.task_wait(task_id, timeout=60):
             logger.info(f"Waiting on {task_id=}")
+
+    @property
+    def task_nfiles(self):
+        if self._task_data is None:
+            return 0
+        return len(self._task_data.iter_items())

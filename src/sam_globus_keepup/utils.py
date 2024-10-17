@@ -36,14 +36,16 @@ def df(path: pathlib.Path) -> int:
 
 def check_env(var: str, val: Optional[str]=None) -> None:
     """Raise if environment variable var is not equal to val."""
-    eq_str = f'={val}'
+    eq_str = ''
+    if val is not None:
+        eq_str = f'={val}'
 
     if var in os.environ:
         if val is None:
             # any value OK
-            return
+            return os.environ[var]
 
         if os.environ[var] == str(val):
-            return
+            return os.environ[var]
     
     raise RuntimeError(f"Must set {var}{eq_str} environment variable.")

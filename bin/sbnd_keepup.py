@@ -19,6 +19,8 @@ from sam_globus_keepup.const import SBND_RAWDATA_REGEXP
 from sam_globus_keepup.utils import run_path, check_env
 
 
+SAM_DATASET = "sbnd_keepup_from_17200_raw_Oct14"
+
 SCRATCH_PATH = pathlib.Path('/scratch/sbnd/rawdata')
 
 # a pure path because the destination file system is not mounted on this machine
@@ -41,7 +43,7 @@ def main():
 
 
     with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as globus_session, \
-            SAMProjectManager(project_base=project_base, dataset=DATASET) as sam_project:
+            SAMProjectManager(project_base=project_base, dataset=SAM_DATASET) as sam_project:
 
         for f in sam_project.get_files():
             logger.info(f"Starting transfer of {f} to src: {SCRATCH_PATH}")
