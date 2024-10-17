@@ -10,18 +10,27 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-import ifdh
 import samweb_client
 
 import logging
 logger = logging.getLogger(__name__)
 
+from . import IFDH_Client, SAMWeb_Client, EXPERIMENT
+
+
+def SAM_dataset_exists(dataset: str) -> bool:
+    try:
+        SAMWeb_Client.descDefinition(dataset)
+        return True
+    except samweb_client.exceptions.DefinitionNotFound:
+        return False
+
 
 class SAMProjectManager:
     """ContextManager for running a SAM project."""
     def __init__(self, project_base: str, dataset: str):
-        self._client = ifdh.ifdh()
-        self._samweb_client = samweb_client.SAMWebClient()
+        self._client = IFDH_Client
+        self._samweb_client = SAMWeb_Client
 
         now_str = datetime.now().strftime("%Y%m%dT%H%M%S")
         project_name = f"{project_base}_{now_str}"
@@ -31,9 +40,7 @@ class SAMProjectManager:
         self.dataset = f"{project_base}_{dataset}_TEST"
 
         # check if dataset exists, create it if not
-        try:
-            self._samweb_client.descDefinition(self.dataset)
-        except samweb_client.exceptions.DefinitionNotFound:
+        if not SAM_dataset_exists(self.dataset):
             self._samweb_client.createDefinition(self.dataset, self.dims)
 
         self.nfiles = self._samweb_client.countFiles(self.dims)
@@ -116,7 +123,6 @@ class SAMProjectManager:
 
         if release:
             self.release_current_file()
-
 
     def release_current_file(self):
         """Mark the current file as completed."""
