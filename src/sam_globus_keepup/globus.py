@@ -149,4 +149,4 @@ class GLOBUSSessionManager:
     def task_nfiles(self):
         if self._task_data is None:
             return 0
-        return len(self._task_data.iter_items())
+        return len(list(self._task_data.iter_items()))

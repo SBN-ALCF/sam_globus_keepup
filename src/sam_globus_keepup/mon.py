@@ -2,11 +2,14 @@
 Monitoring functions
 """
 
-import datetime
+import time
 import json
 import collections
 import subprocess
-import statistics
+import threading
+import pathlib
+from datetime import datetime
+from typing import Optional
 
 import logging
 logger = logging.getLogger(__name__)
@@ -16,71 +19,92 @@ def ifstat():
     """Return the output of ifstat --json, and unwrap the kernel dict."""
     return json.loads(subprocess.check_output(['ifstat', '--json']))['kernel']
 
+def ip(interface: str):
+    """Return the output of ip command as JSON."""
+    args = ('ip', '-s', '--json', 'link', 'show', 'dev', interface)
+    return json.loads(subprocess.check_output(args))[0]['stats64']
 
-class NetworkTimer:
+
+class NetworkMonitor:
     """
     Class to sample network receive and transfer bytes at regular intervals.
     Args:
         interface: Network interface name
         sample_rate: Readings are taken at this rate
-        save_rate: Readings collected during this interval are averaged, result is stored in data
         history_size: Data will only be available for the past history_size readings
     """
-    def __init__(self, interface: str, sample_rate: int, save_rate: int, history_size: int=1000):
-        if sample_rate > save_rate:
-            logger.warning('Sampling rate is longer than the save rate, so entries will be duplicated.')
-
+    def __init__(self, interface: str, sample_rate: int, fname: Optional[pathlib.Path]=None, history_size: int=1000):
         self.interface = interface
         self.sample_rate = sample_rate
-        self.save_rate = save_rate
         self.data = collections.deque(maxlen=history_size)
+        self.output_filename = fname
+        if fname is not None:
+            logger.info(f'Writing NetworkMonitor output to {fname}')
+        else:
+            logger.info(f'Writing NetworkMonitor output to stdout')
 
-        self._samples = collections.deque(maxlen=max(1, int(save_rate / sample_rate)) + 1)
-
-        self._last_save_time = datetime.now()
-        self._last_sample_time = datetime.now()
+        self.sample()
+        self._thread = threading.Thread(target=self._callback, daemon=True)
+        self._stop = False
+        self._first = True
 
     def start(self):
-        self._samples.clear()
-        self._last_save_time = datetime.now()
-        self._last_sample_time = datetime.now()
-
-        self._sample_timer.start()
-        self._save_timer.start()
+        self._stop = False
+        self._first = True
+        self._thread.start()
 
     def stop(self):
-        pass
+        self._stop = True
 
-    def sample_callback(self):
-        """Record the latest sample."""
-        self._samples.append(ifstat()[self.interface]['tx_bytes'])
+    def sample(self):
+        """Make a measurement."""
         self._last_sample_time = datetime.now()
+        self._last_sample = ip(self.interface)['tx']['bytes']
+        logger.debug(f'Network monitor sample call at {self._last_sample_time} ({self._last_sample} bytes)')
+        return self._last_sample_time, self._last_sample
 
-    def save_callback(self):
-        """
-        Write average of samples to data. Handle edge case where
-        _last_sample_time happens after we were supposed to save.
-        """
-        now = datetime.now()
-        elapsed_s = (now - self._last_save_time).total_seconds()
-        excess_s = elapsed_s - self.save_rate
-        extra_sample = None
-        if (now - self._last_sample_time).total_seconds() < excess_s:
-            # we sampled after we were supposed to save
-            extra_sample = self._samples.pop()
+    def _callback(self):
+        """Difference between last measurement and this one."""
+        # copy last measurement
+        while not self._stop:
+            logger.debug(f'Network monitor for {self.interface} starting')
+            then = self._last_sample_time
+            total_bytes = self._last_sample
 
-        first = self._samples.popleft()
-        last = self._samples.pop()
-        self.data.append((now, last - first))
+            # update measurement
+            now, now_sample = self.sample()
+            total_bytes = now_sample - total_bytes
 
-        self._samples.clear()
-        if extra_sample is not None:
-            self._samples.append(extra_sample)
+            elapsed_s = (now - then).total_seconds()
 
-    @property
-    def data(self):
-        return self.data
+            # try to catch up
+            excess_s = elapsed_s - self.sample_rate
+            wait_s = self.sample_rate
+            if excess_s > 0 and excess_s < wait_s:
+                wait_s -= excess_s
+
+            # skip the first measurement (dt~=0)
+            if not self._first:
+                self.data.append((now, elapsed_s, total_bytes))
+                str_ = f"{now.strftime('%Y-%m-%d %H:%M:%S')}, {elapsed_s:.2f}, {total_bytes:d}\n"
+                print(str_[:-1])
+                if self.output_filename is not None:
+                    with open(self.output_filename, 'a') as f:
+                        f.write(str_)
+            else:
+                self._first = False
+
+            logger.debug(f'Network monitor for {self.interface} waiting {wait_s:.1f} seconds')
+            print(f'Network monitor for {self.interface} waiting {wait_s:.1f} seconds')
+            time.sleep(wait_s)
 
     def reset(self):
-        pass
+        self.data.clear()
 
+
+if __name__ == '__main__':
+    nt = NetworkMonitor('eno1', 5)
+    nt.start()
+    time.sleep(15)
+    nt.stop()
+    print(nt.data)
