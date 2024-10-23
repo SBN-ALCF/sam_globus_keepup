@@ -7,7 +7,9 @@ References:
 
 
 import os
+import copy
 import pathlib
+import threading
 from typing import List
 
 import globus_sdk
@@ -31,7 +33,9 @@ class GLOBUSSessionManager:
         self.dest_endpoint = dest_endpoint
         self.token_data = {}
         self._task_data = None
+        self._rm_task_data = None
         self._last_task_id = None
+        self._thread = None
 
         logger.info('f{self.src_endpoint=} {self.dest_endpoint=}')
 
@@ -100,8 +104,10 @@ class GLOBUSSessionManager:
         # start a new task if we don't have one yet
         if self._task_data is None:
             self._task_data = globus_sdk.TransferData(source_endpoint=self.src_endpoint, destination_endpoint=self.dest_endpoint)
+            self._rm_task_data = globus_sdk.DeleteData(endpoint=self.src_endpoint)
 
         self._task_data.add_item(str(file_src), str(file_dest))
+        self._rm_task_data.add_item(str(file_src))
 
     def clear_task(self) -> None:
         """Reset task data. Currently this just clears the reference."""
@@ -109,15 +115,33 @@ class GLOBUSSessionManager:
             return
 
         self._task_data = None
+        self._rm_task_data = None
 
     def submit(self) -> str:
         if self._task_data is None:
             logger.warn('Called submit_task with no task data, skipping.')
             return
 
+        if self._thread is not None:
+            if self._thread.is_alive():
+                logger.warn('Called submit_task while a previous was still running. Waiting...')
+                self._thread.join()
+
+        self._thread = threading.Thread(target=self._threaded_submit)
+        self._thread.start()
+
+    def _threaded_submit(self):
+        """Do submission in a thread so we can wait between transfer & cleanup."""
+
+        # copy task data, then clear. As soon as we submit, want to be able to
+        # start setting up next task
+        task_data = copy.copy(self._task_data)
+        rm_task_data = copy.copy(self._rm_task_data)
+        self.clear_task()
+
         # this can fail in rare cases. Solution is to renew the client
         try:
-            task_doc = self.client.submit_transfer(self._task_data)
+            task_doc = self.client.submit_transfer(task_data)
         except globus_sdk.TransferAPIError as err:
             if not err.info.consent_required:
                 raise err
@@ -125,13 +149,19 @@ class GLOBUSSessionManager:
             logger.warning(CONSENT_REQ_ERR_MSG)
             print(CONSENT_REQ_ERR_MSG)
             self.client = self._get_transfer_client(scopes=err.info.consent_required.required_scopes)
-            task_doc = self.client.submit_transfer(self._task_data)
-
+            task_doc = self.client.submit_transfer(task_data)
+        
         task_id = task_doc["task_id"]
-        logger.info(f"Submitted transfer, task_id={task_id}")
-        self.clear_task()
         self._last_task_id = task_id
-        return task_id
+        logger.info(f"Submitted transfer, task_id={task_id}")
+        self.wait(task_id=task_id)
+        logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
+
+        rm_task_doc = self.client.submit_delete(rm_task_data)
+        rm_task_id = task_doc["task_id"]
+
+        self.wait(task_id=rm_task_id)
+
 
     def wait(self, task_id=None):
         """Sleep until task is completed. If no task ID, use the last submission ID."""
@@ -144,6 +174,14 @@ class GLOBUSSessionManager:
         logger.info(f"Waiting on {task_id=}")
         while not self.client.task_wait(task_id, timeout=60):
             logger.info(f"Waiting on {task_id=}")
+
+    def running(self):
+        if self._last_task_id is None:
+            return False
+
+        # check if the task is running by calling task_wait with 1s timeout
+        task = self.client.task_list(filter={'task_id': self._last_task_id})['DATA'][0]
+        return 'ACTIVE' in task['status']
 
     @property
     def task_nfiles(self):
