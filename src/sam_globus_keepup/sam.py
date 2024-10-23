@@ -111,12 +111,16 @@ class SAMProjectManager:
         """Start processes for copying files. Once they are copied, add them to our queue."""
         self._threads = []
         for i in range(self._parallel):
-             t = threading.Thread(target=self._threaded_copy, args=(callback,))
+             t = threading.Thread(target=self._threaded_process_next, args=(callback,))
              self._threads.append(t)
              t.start()
             
-    def _threaded_copy(self, callback) -> None:
-        """Done in a thread for each parallel process."""
+    def _threaded_process_next(self, callback) -> None:
+        """
+        Get the next file from the SAM project and run callback(file)
+        Done in a thread for each parallel process. Once complete,
+        file is added to this object's queue.
+        """
         # url, appname, appversion, dest, user
         process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", "sbndpro")
         while True:
@@ -137,8 +141,7 @@ class SAMProjectManager:
         time.sleep(0.5)
         self._client.updateFileStatus(self._url, process_id, fname, "consumed")
 
-    def get_files(self) -> str:
-        """Generator wrapper for getNextFile."""
-        while not self._queue.empty():
-            self._current_file = self._queue.get()
-            yield self._current_file
+    def get_file(self, timeout=None) -> str:
+        if self._queue.empty():
+            return None
+        return self._queue.get(timeout=timeout)
