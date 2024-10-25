@@ -37,7 +37,7 @@ class GLOBUSSessionManager:
         self._last_task_id = None
         self._thread = None
 
-        logger.info('f{self.src_endpoint=} {self.dest_endpoint=}')
+        logger.info(f'{self.src_endpoint=} {self.dest_endpoint=}')
 
 
     def __enter__(self):
@@ -155,8 +155,13 @@ class GLOBUSSessionManager:
         self._last_task_id = task_id
         logger.info(f"Submitted transfer, task_id={task_id}")
         self.wait(task_id=task_id)
-        logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
 
+        task = self.client.task_list(filter={'task_id': task_id})['DATA'][0]
+        if 'SUCCEEDED' not in task['status']:
+            logger.warning(f"Transfer task with {task_id=} failed! Returning....")
+            return
+
+        logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
         rm_task_doc = self.client.submit_delete(rm_task_data)
         rm_task_id = task_doc["task_id"]
 

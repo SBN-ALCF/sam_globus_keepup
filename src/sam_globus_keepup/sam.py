@@ -144,4 +144,8 @@ class SAMProjectManager:
     def get_file(self, timeout=None) -> str:
         if self._queue.empty():
             return None
-        return self._queue.get(timeout=timeout)
+        item = self._queue.get(timeout=timeout)
+
+        # mark as complete in case this is being used in a thread
+        self._queue.task_done()
+        return item
