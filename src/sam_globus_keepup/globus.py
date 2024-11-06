@@ -36,6 +36,7 @@ class GLOBUSSessionManager:
         self._rm_task_data = None
         self._last_task_id = None
         self._thread = None
+        self._running = False
 
         logger.info(f'{self.src_endpoint=} {self.dest_endpoint=}')
 
@@ -151,6 +152,7 @@ class GLOBUSSessionManager:
             self.client = self._get_transfer_client(scopes=err.info.consent_required.required_scopes)
             task_doc = self.client.submit_transfer(task_data)
         
+        self._running = True
         task_id = task_doc["task_id"]
         self._last_task_id = task_id
         logger.info(f"Submitted transfer, task_id={task_id}")
@@ -166,6 +168,7 @@ class GLOBUSSessionManager:
         rm_task_id = task_doc["task_id"]
 
         self.wait(task_id=rm_task_id)
+        self._running = False
 
 
     def wait(self, task_id=None):
@@ -181,12 +184,17 @@ class GLOBUSSessionManager:
             logger.info(f"Waiting on {task_id=}")
 
     def running(self):
+        return self._running
+
+        '''
+        # legacy implementation. Might be useful
         if self._last_task_id is None:
             return False
 
         # check if the task is running by calling task_wait with 1s timeout
         task = self.client.task_list(filter={'task_id': self._last_task_id})['DATA'][0]
         return 'ACTIVE' in task['status']
+        '''
 
     @property
     def task_nfiles(self):

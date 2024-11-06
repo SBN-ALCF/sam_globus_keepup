@@ -24,7 +24,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 SAM_PROJECT_BASE = 'globus_dtn_xfer_test3'
-SAM_DATASET = "sbnd_keepup_from_17400_raw_Oct25"
+SAM_DATASET = "sbnd_keepup_from_17600_raw_Nov06"
 
 SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
 
@@ -82,6 +82,13 @@ def main():
     nm1.start()
     nm2.start()
 
+    main_loop(client_id, src_endpoint, dest_endpoint)
+
+    nm1.stop()
+    nm2.stop()
+
+
+def main_loop(client_id, src_endpoint, dest_endpoint):
     sam_callback = functools.partial(ifdh_cp_run_number, dest_base=SCRATCH_PATH)
     with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as globus_session, \
            SAMProjectManager(project_base=SAM_PROJECT_BASE, dataset=SAM_DATASET, parallel=8) as sam_project:
@@ -92,31 +99,43 @@ def main():
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
 
-        if globus_session.task_nfiles > GLOBUS_NFILE_MAX:
+        if globus_session.task_nfiles > 0:
             logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
             globus_session.submit()
-        else:
-            logger.info(f"Starting with nfiles={globus_session.task_nfiles}")
+
+        if sam_project.nfiles == 0:
+            logger.info(f"SAM project has no files, exiting.")
+            return
 
         # start file transfer with SAM + ifdh
         sam_project.start(callback=sam_callback)
-        count = 0
+        nfiles = 0
+        nsleep = 0
         while True:
             f = sam_project.get_file(timeout=1)
             if f is None:
-                logger.debug(f"No queued files. GLOBUS sleeping")
+                # break after no new files
+                nsleep += 1
+                if nsleep > 10:
+                    logger.debug(f"Transferring outstanding files and exiting!")
+                    globus_session.submit()
+                    globus_session.wait()
+                    break
+
+                logger.debug(f"No queued files. GLOBUS sleeping {nsleep=}")
+
                 time.sleep(10)
                 continue
             
-            count += 1
+            nfiles += 1
 
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
 
             # don't start a new transfer until we have BUFFER_KB of data
             # if du(SCRATCH_PATH) < BUFFER_KB or globus_session.running():
-            if count < GLOBUS_NFILE_MAX:
-                logger.debug(f"GLOBUS: Waiting for {GLOBUS_NFILE_MAX} files ({count=})")
+            if nfiles < GLOBUS_NFILE_MAX:
+                logger.debug(f"GLOBUS: Waiting for {GLOBUS_NFILE_MAX} files ({nfiles=})")
                 continue
 
             # don't start if we have an outstanding task
@@ -125,12 +144,11 @@ def main():
                 logger.debug(f"GLOBUS: Waiting for task to complete ({running_task=})")
                 continue
 
-            count = 0
+            nfiles = 0
+            nsleep = 0
             logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {eagle_dest}")
             globus_session.submit()
 
-    nm1.stop()
-    nm2.stop()
 
 
 if __name__ == '__main__':

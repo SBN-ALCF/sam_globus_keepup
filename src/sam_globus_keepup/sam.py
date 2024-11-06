@@ -53,7 +53,11 @@ class SAMProjectManager:
         now_str = datetime.now().strftime("%Y%m%dT%H%M%S")
         project_name = f"{project_base}_{now_str}"
         self.project_name = project_name
-        self.dims = f"(defname: {dataset} minus ((project_name like {project_base}_% and consumed_status like 'consumed')))"
+
+        # take a snapshot of the definition to fix the file list.
+        # The direct approach, "defname: ... minus ...", query takes a very long time
+        snap_id = self._samweb_client.takeSnapshot(dataset)
+        self.dims = f"(snapshot_id {snap_id} minus ((project_name like {project_base}_% and consumed_status 'consumed')))"
 
         self.dataset = f"{project_base}_{dataset}_TEST"
 
@@ -109,6 +113,10 @@ class SAMProjectManager:
 
     def start(self, callback=None):
         """Start processes for copying files. Once they are copied, add them to our queue."""
+        if self.nfiles == 0:
+            logger.info(f"No files to process, not starting.")
+            return False
+
         self._threads = []
         for i in range(self._parallel):
              t = threading.Thread(target=self._threaded_process_next, args=(callback,))
