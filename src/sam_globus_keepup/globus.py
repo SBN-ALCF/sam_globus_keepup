@@ -165,11 +165,10 @@ class GLOBUSSessionManager:
 
         logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
         rm_task_doc = self.client.submit_delete(rm_task_data)
-        rm_task_id = task_doc["task_id"]
+        rm_task_id = rm_task_doc["task_id"]
 
         self.wait(task_id=rm_task_id)
         self._running = False
-
 
     def wait(self, task_id=None):
         """Sleep until task is completed. If no task ID, use the last submission ID."""

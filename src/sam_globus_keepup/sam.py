@@ -61,9 +61,10 @@ class SAMProjectManager:
 
         self.dataset = f"{project_base}_{dataset}_TEST"
 
-        # check if dataset exists, create it if not
-        if not SAM_dataset_exists(self.dataset):
-            self._samweb_client.createDefinition(self.dataset, self.dims)
+        # check if dataset exists, delete it if it does
+        if SAM_dataset_exists(self.dataset):
+            self._samweb_client.deleteDefinition(self.dataset)
+        self._samweb_client.createDefinition(self.dataset, self.dims)
 
         self.nfiles = self._samweb_client.countFiles(self.dims)
 
