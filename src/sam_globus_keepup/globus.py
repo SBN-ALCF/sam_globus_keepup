@@ -174,6 +174,7 @@ class GLOBUSSessionManager:
         """Sleep until task is completed. If no task ID, use the last submission ID."""
         if task_id is None and self._last_task_id is None:
             logger.warning('Tried to wait on a task but the task ID was not specified and there was no last task.')
+            return
 
         if task_id is None:
             task_id = self._last_task_id

@@ -51,7 +51,7 @@ def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_
     if dest_is_dir:
         # directory based on run number from file name
         result = SBND_RAWDATA_REGEXP.match(fname)
-        evb, run_number = (int(g) for g in result.groups())
+        run_number = int(result.groups()[0])
         dest = dest_base / run_path(run_number)
         dest.mkdir(parents=True, exist_ok=True)
 
@@ -61,7 +61,7 @@ def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_
 def scratch_eagle_paths(filename: str):
     """Return corresponding paths on both scratch and eagle for filename."""
     result = SBND_RAWDATA_REGEXP.match(str(filename))
-    evb, run_number = (int(g) for g in result.groups())
+    run_number = int(result.groups()[0])
     srcdir = SCRATCH_PATH / run_path(run_number)
 
     f_basename = pathlib.PurePath(filename).name
@@ -119,6 +119,8 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
                 if nsleep > 10:
                     logger.debug(f"Transferring outstanding files and exiting!")
                     globus_session.submit()
+                    # prevents wait call from happening before submission is finished 
+                    time.sleep(10)
                     globus_session.wait()
                     break
 
@@ -146,7 +148,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
 
             nfiles = 0
             nsleep = 0
-            logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {eagle_dest}")
+            logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {dest_endpoint}")
             globus_session.submit()
 
 

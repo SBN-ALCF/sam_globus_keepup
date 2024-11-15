@@ -131,7 +131,7 @@ class SAMProjectManager:
         file is added to this object's queue.
         """
         # url, appname, appversion, dest, user
-        process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", "sbndpro")
+        process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", "sbndpro") #, schemas="http")
         while True:
             next_file = self._client.getNextFile(self._url, process_id)
             if not next_file:
