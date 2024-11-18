@@ -5,11 +5,8 @@ FILENAME = 'data_evb04_EventBuilder4_art1_run17204_25_20241013T025419.root'
 
 
 def test_sbnd_regexp():
-    assert len(SBND_RAWDATA_REGEXP.match(FILENAME).groups()) == 2
-
-def test_sbnd_regexp_evb():
-    assert SBND_RAWDATA_REGEXP.match(FILENAME).groups()[0] == '04'
+    assert len(SBND_RAWDATA_REGEXP.match(FILENAME).groups()) == 1
 
 def test_sbnd_regexp_run():
-    assert SBND_RAWDATA_REGEXP.match(FILENAME).groups()[1] == '17204'
+    assert SBND_RAWDATA_REGEXP.match(FILENAME).groups()[0] == '17204'
 

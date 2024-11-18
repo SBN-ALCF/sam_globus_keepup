@@ -6,7 +6,8 @@ import sys
 import os
 import time
 import pathlib
-import threading
+# import threading
+import multiprocessing
 import queue
 from datetime import datetime
 from typing import Optional
@@ -120,7 +121,8 @@ class SAMProjectManager:
 
         self._threads = []
         for i in range(self._parallel):
-             t = threading.Thread(target=self._threaded_process_next, args=(callback,))
+             # t = threading.Thread(target=self._threaded_process_next, args=(callback,))
+             t = multiprocessing.Process(target=self._threaded_process_next, args=(callback,))
              self._threads.append(t)
              t.start()
             
