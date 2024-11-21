@@ -108,10 +108,14 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
             return
 
         # start file transfer with SAM + ifdh
+        # wait a few seconds for files to appear in the queue
         sam_project.start(callback=sam_callback)
+        time.sleep(10)
+
         nfiles = 0
         nsleep = 0
         while True:
+            logger.debug(f"Checking for new files")
             f = sam_project.get_file(timeout=1)
             if f is None:
                 # break after no new files

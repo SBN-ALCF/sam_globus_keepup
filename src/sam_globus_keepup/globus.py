@@ -128,17 +128,17 @@ class GLOBUSSessionManager:
                 logger.warn('Called submit_task while a previous was still running. Waiting...')
                 self._thread.join()
 
-        self._thread = threading.Thread(target=self._threaded_submit)
-        self._thread.start()
-
-    def _threaded_submit(self):
-        """Do submission in a thread so we can wait between transfer & cleanup."""
-
         # copy task data, then clear. As soon as we submit, want to be able to
         # start setting up next task
         task_data = copy.copy(self._task_data)
         rm_task_data = copy.copy(self._rm_task_data)
         self.clear_task()
+
+        self._thread = threading.Thread(target=self._threaded_submit, args=(task_data, rm_task_data))
+        self._thread.start()
+
+    def _threaded_submit(self, task_data, rm_task_data):
+        """Do submission in a thread so we can wait between transfer & cleanup."""
 
         # this can fail in rare cases. Solution is to renew the client
         try:

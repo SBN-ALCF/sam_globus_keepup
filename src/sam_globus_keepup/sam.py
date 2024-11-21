@@ -8,7 +8,6 @@ import time
 import pathlib
 # import threading
 import multiprocessing
-import queue
 from datetime import datetime
 from typing import Optional
 
@@ -81,8 +80,8 @@ class SAMProjectManager:
             self._current_file = None 
 
         # we use threaded getNextFile calls, but user may want a serial output of files
-        self._queue = queue.Queue()
-        self._threads = []
+        self._queue = multiprocessing.Queue()
+        self._processes = []
 
     def __enter__(self):
         logger.info("Project starting...")
@@ -99,7 +98,7 @@ class SAMProjectManager:
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
-        for t in self._threads:
+        for t in self._processes:
             t.join()
 
         logger.info("Project ending...")
@@ -119,11 +118,11 @@ class SAMProjectManager:
             logger.info(f"No files to process, not starting.")
             return False
 
-        self._threads = []
+        self._processes = []
         for i in range(self._parallel):
              # t = threading.Thread(target=self._threaded_process_next, args=(callback,))
              t = multiprocessing.Process(target=self._threaded_process_next, args=(callback,))
-             self._threads.append(t)
+             self._processes.append(t)
              t.start()
             
     def _threaded_process_next(self, callback) -> None:
@@ -155,8 +154,6 @@ class SAMProjectManager:
     def get_file(self, timeout=None) -> str:
         if self._queue.empty():
             return None
-        item = self._queue.get(timeout=timeout)
 
-        # mark as complete in case this is being used in a thread
-        self._queue.task_done()
+        item = self._queue.get(timeout=timeout)
         return item
