@@ -134,6 +134,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
                 continue
             
             nfiles += 1
+            nsleep = 0
 
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
