@@ -32,7 +32,7 @@ SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
 EAGLE_PATH = pathlib.PurePosixPath('/neutrinoGPU/sbnd/data')
 
 BUFFER_KB = 100 * 1024 * 1024 
-GLOBUS_NFILE_MAX = 10000
+GLOBUS_NFILE_MAX = 2000
 
 
 def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
@@ -83,6 +83,9 @@ def main():
     nm2.start()
 
     main_loop(client_id, src_endpoint, dest_endpoint)
+
+    # accumulate a few data points from the network monitors after all transfers conclude
+    time.sleep(600)
 
     nm1.stop()
     nm2.stop()
