@@ -7,6 +7,7 @@ import os
 import time
 import pathlib
 # import threading
+import queue
 import multiprocessing
 from datetime import datetime
 from typing import Optional
@@ -94,6 +95,7 @@ class SAMProjectManager:
         _url = self._client.startProject(self.project_name, EXPERIMENT, self.dataset, "sbndpro", EXPERIMENT)
         time.sleep(2)
         self._url = self._client.findProject(self.project_name, EXPERIMENT)
+        logger.info(f"Project started with {self._url=}")
 
         return self
 
@@ -120,7 +122,6 @@ class SAMProjectManager:
 
         self._processes = []
         for i in range(self._parallel):
-             # t = threading.Thread(target=self._threaded_process_next, args=(callback,))
              t = multiprocessing.Process(target=self._threaded_process_next, args=(callback,))
              self._processes.append(t)
              t.start()
@@ -143,7 +144,14 @@ class SAMProjectManager:
                 callback(next_file)
 
             self.release_file(next_file, process_id)
+            logger.debug(f'transferred & released file ({next_file=})')
             self._queue.put(next_file)
+            try:
+                logger.debug(f'Approximate queue length (qsize) is {self._queue.qsize()}')
+            except NotImplementedError:
+                pass
+
+        logger.debug(f'getNextFile empty, ending process')
 
     def release_file(self, fname: str, process_id: int):
         """Mark a file as completed within this project."""
@@ -151,9 +159,27 @@ class SAMProjectManager:
         time.sleep(0.5)
         self._client.updateFileStatus(self._url, process_id, fname, "consumed")
 
-    def get_file(self, timeout=None) -> str:
+    def get_file(self) -> str:
         if self._queue.empty():
             return None
 
-        item = self._queue.get(timeout=timeout)
+        try:
+            item = self._queue.get(block=False)
+        except queue.Empty:
+            logger.debug(f'failed to get file within {timeout} s')
+            return None
+
         return item
+
+    def running(self) -> bool:
+        if self._url is None:
+            return False
+
+        for t in self._processes:
+            if t.is_alive():
+                return True
+
+        # all processes ended
+        return False
+
+        # return self._samweb_client.projectSummary(self._url)['project_status'] == 'running'

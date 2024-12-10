@@ -119,11 +119,11 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
         nsleep = 0
         while True:
             logger.debug(f"Checking for new files")
-            f = sam_project.get_file(timeout=1)
+            f = sam_project.get_file()
             if f is None:
                 # break after no new files
                 nsleep += 1
-                if nsleep > 10:
+                if nsleep > 10 and not sam_project.running():
                     logger.debug(f"Transferring outstanding files and exiting!")
                     globus_session.submit()
                     # prevents wait call from happening before submission is finished 
