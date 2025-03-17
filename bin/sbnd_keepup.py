@@ -92,77 +92,91 @@ def main():
 
 
 def main_loop(client_id, src_endpoint, dest_endpoint):
-    sam_callback = functools.partial(ifdh_cp_run_number, dest_base=SCRATCH_PATH)
-    with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as globus_session, \
-           SAMProjectManager(project_base=SAM_PROJECT_BASE, dataset=SAM_DATASET, parallel=8) as sam_project:
-
-        # check if there are outstanding files. If so, try to transfer these
+    # check if there are outstanding files. If so, try to transfer these before starting SAM
+    with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as globus_session:
         logger.debug(f"Checking for outstanding files at {SCRATCH_PATH}...")
+        nfiles_outstanding = 0 
         for f in SCRATCH_PATH.glob('**/*.root'):
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
-
-        if globus_session.task_nfiles > 0:
-            logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
-            globus_session.submit()
-
-        if sam_project.nfiles == 0:
-            logger.info(f"SAM project has no files, exiting.")
-            return
-
-        # start file transfer with SAM + ifdh
-        # wait a few seconds for files to appear in the queue
-        sam_project.start(callback=sam_callback)
-        time.sleep(10)
-
-        nfiles = 0
-        nsleep = 0
-        while True:
-            logger.debug(f"Checking for new files")
-            f = sam_project.get_file()
-            if f is None:
-                # break after no new files
-                nsleep += 1
-                if nsleep > 10 and not sam_project.running():
-                    logger.debug(f"Transferring outstanding files and exiting!")
-                    globus_session.submit()
-                    # prevents wait call from happening before submission is finished 
-                    time.sleep(10)
-                    globus_session.wait()
-                    break
-
-                logger.debug(f"No queued files. GLOBUS sleeping {nsleep=}")
-
+            nfiles_outstanding += 1
+            if nfiles_outstanding >= 2000:
+                logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
+                globus_session.submit()
                 time.sleep(10)
-                continue
-            
-            nfiles += 1
-            nsleep = 0
+                globus_session.wait()
+                nfiles_outstanding = 0
 
-            src, dest = scratch_eagle_paths(f)
-            globus_session.add_file(src, dest)
+        # start SAM project once all outstanding files have been transferred
 
-            # don't start a new transfer until we have BUFFER_KB of data
-            # if du(SCRATCH_PATH) < BUFFER_KB or globus_session.running():
-            if nfiles < GLOBUS_NFILE_MAX:
-                logger.debug(f"GLOBUS: Waiting for {GLOBUS_NFILE_MAX} files ({nfiles=})")
-                continue
+        with SAMProjectManager(project_base=SAM_PROJECT_BASE, dataset=SAM_DATASET, parallel=8) as sam_project:
+            if sam_project.nfiles == 0:
+                logger.info(f"SAM project has no files, exiting.")
+                return
 
-            # don't start if we have an outstanding task
-            running_task = globus_session.running()
-            if running_task:
-                logger.debug(f"GLOBUS: Waiting for task to complete ({running_task=})")
-                continue
+            # start file transfer with SAM + ifdh
+            # wait a few seconds for files to appear in the queue
+            sam_callback = functools.partial(ifdh_cp_run_number, dest_base=SCRATCH_PATH)
+            sam_project.start(callback=sam_callback)
+            time.sleep(10)
 
             nfiles = 0
             nsleep = 0
-            logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {dest_endpoint}")
-            globus_session.submit()
+            while True:
+                logger.debug(f"Checking for new files")
+                f = sam_project.get_file()
+                if f is None:
+                    # break after no new files
+                    nsleep += 1
+
+                    # sometimes SAM project gets a stale process
+                    if (nsleep > 10 and not sam_project.running()) or nsleep > 1000:
+                        logger.debug(f"Transferring outstanding files and exiting!")
+                        globus_session.submit()
+                        # prevents wait call from happening before submission is finished 
+                        time.sleep(10)
+                        globus_session.wait()
+                        break
+
+                    logger.debug(f"No queued files. GLOBUS sleeping {nsleep=}")
+
+                    time.sleep(10)
+                    continue
+                
+                nfiles += 1
+                nsleep = 0
+
+                src, dest = scratch_eagle_paths(f)
+                globus_session.add_file(src, dest)
+
+                # don't start a new transfer until we have BUFFER_KB of data
+                # if du(SCRATCH_PATH) < BUFFER_KB or globus_session.running():
+                if nfiles < GLOBUS_NFILE_MAX:
+                    logger.debug(f"GLOBUS: Waiting for {GLOBUS_NFILE_MAX} files ({nfiles=})")
+                    continue
+
+                # don't start if we have an outstanding task
+                running_task = globus_session.running()
+                if running_task:
+                    logger.debug(f"GLOBUS: Waiting for task to complete ({running_task=})")
+                    continue
+
+                nfiles = 0
+                nsleep = 0
+                logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {dest_endpoint}")
+                globus_session.submit()
 
 
 
 if __name__ == '__main__':
+    logging_fmt = '[%(asctime)s] (%(levelname)s) %(name)s: %(message)s'
     logging.basicConfig(filename='globus_xfer.log',
-            format='[%(asctime)s] (%(levelname)s) %(name)s: %(message)s',
-            filemode='a',level=logging.DEBUG)
+            format=logging_fmt, filemode='a',level=logging.DEBUG)
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(logging_fmt)
+    stdout_handler.setFormatter(formatter)
+    root = logging.getLogger()
+    root.addHandler(stdout_handler)
     main()

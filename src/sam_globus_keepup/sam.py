@@ -85,7 +85,7 @@ class SAMProjectManager:
         self._processes = []
 
     def __enter__(self):
-        logger.info("Project starting...")
+        logger.info(f"Project {self.project_name} starting...")
         if self.nfiles == 0:
             # do nothing, since we cannot start a project with no files
             logger.info(f"No files in dataset {self.dataset}, project will not be created.")

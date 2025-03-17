@@ -14,6 +14,9 @@ from typing import List
 
 import globus_sdk
 from globus_sdk.scopes import TransferScopes
+from globus_sdk.gare import GlobusAuthorizationParameters
+
+from sam_globus_keepup.utils import check_env
 
 import logging
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class GLOBUSSessionManager:
     def __enter__(self):
         logger.debug('Trying to establish transfer client')
         self.client = self._get_transfer_client()
+        print('here')
 
         # check if we need additional scopes
         consent_required_scopes = []
@@ -61,6 +65,21 @@ class GLOBUSSessionManager:
     def _get_transfer_client(self, scopes=TransferScopes.all):
         """Get tokens via web authentication, then read token data to construct
         transfer client with proper authorization."""
+
+        '''
+        client_id = check_env("GLOBUS_API_CLIENT_ID")
+        client_secret = check_env("GLOBUS_APP_SECRET")
+        app = globus_sdk.ClientApp(
+            "SBND Keepup Transfer", client_id=client_id, client_secret=client_secret,
+        )
+
+        # app = globus_sdk.UserApp(
+        #     "SBND Keepup Transfer", client_id=client_id
+        # )
+        print(scopes)
+        return globus_sdk.TransferClient(app=app, app_scopes=scopes)
+
+        '''
         self.auth_client.oauth2_start_flow(requested_scopes=scopes, refresh_tokens=True)
 
         authorize_url = self.auth_client.oauth2_get_authorize_url()
