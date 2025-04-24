@@ -73,13 +73,13 @@ class GLOBUSSessionManager:
             "SBND Keepup Transfer", client_id=client_id, client_secret=client_secret,
         )
 
-        # app = globus_sdk.UserApp(
-        #     "SBND Keepup Transfer", client_id=client_id
-        # )
+        app = globus_sdk.UserApp(
+            "SBND Keepup Transfer", client_id=client_id
+        )
         print(scopes)
         return globus_sdk.TransferClient(app=app, app_scopes=scopes)
-
         '''
+
         self.auth_client.oauth2_start_flow(requested_scopes=scopes, refresh_tokens=True)
 
         authorize_url = self.auth_client.oauth2_get_authorize_url()

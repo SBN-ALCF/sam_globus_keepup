@@ -6,21 +6,21 @@ import pathlib
 import logging
 
 from sam_globus_keepup.globus import GLOBUSSessionManager
+from sam_globus_keepup.utils import check_env
 
 
 def main():
-    client_id = os.environ['GLOBUS_API_CLIENT_ID']
-    src_endpoint = os.environ['GLOBUS_CEPHFS_COLLECTION_ID']
-    dest_endpoint = os.environ['GLOBUS_EAGLE_COLLECTION_ID']
+    client_id = check_env("GLOBUS_API_CLIENT_ID")
+    client_secret = check_env("GLOBUS_APP_SECRET")
+    src_endpoint = check_env("GLOBUS_CEPHFS_COLLECTION_ID")
+    dest_endpoint = check_env("GLOBUS_EAGLE_COLLECTION_ID")
+
     with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as session:
-        session.add_file("/scratch/sbnd/file1.txt", "/neutrinoGPU/file1.txt")
+        session.add_file("/ceph/sbnd/file1.txt", "/file1.txt")
         session.submit()
         session.wait()
 
 
 if __name__ == "__main__":
-    if "GLOBUS_API_CLIENT_ID" not in os.environ:
-        raise RuntimeError("Must set GLOBUS_API_CLIENT_ID environment variable.")
-
-    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+    # logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     main()

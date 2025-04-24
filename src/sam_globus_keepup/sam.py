@@ -20,12 +20,39 @@ logger = logging.getLogger(__name__)
 from . import IFDH_Client, SAMWeb_Client, EXPERIMENT
 
 
+API_URL = 'https://fndca3b.fnal.gov:3880/api/v1/namespace/pnfs/fnal.gov/usr'
+
+
 def SAM_dataset_exists(dataset: str) -> bool:
     try:
         SAMWeb_Client.descDefinition(dataset)
         return True
     except samweb_client.exceptions.DefinitionNotFound:
         return False
+
+
+def file_locality(fname: str) -> str:
+    """Look up file with SAM and return its file locality."""
+    # kind of ugly, need to catch if we get a path instead of a name, but can't
+    # use pathlib since string might have a protocol prefix, e.g., root:///.
+    if '/' in fname:
+        fname = fname.split('/')[-1]
+
+    file_path_str = SAMWeb_Client.getFileAccessUrls(fname, schema='file')
+    if not file_path_str:
+        raise RuntimeError(f'Could not get file locality for {fname}. Is it declared to SAM?')
+
+    # extract URL from xroot string
+    path = pathlib.PurePath(result[0].split('file://')[1]).relative_to('/pnfs')
+    request_url = f'{API_URL}/{path}?locality=True'
+
+    # need to set verify=False
+    result = requests.get(request_url, verify=False)
+
+    if result.status_code != 200:
+        raise RuntimeError(f'Could not get file locality for {fname}, invalid API response.')
+
+    return result.json()['fileLocality']
 
 
 def ifdh_cp(self, fname: str, dest: Optional[pathlib.Path]=None, dest_is_dir: bool=True):
@@ -126,7 +153,7 @@ class SAMProjectManager:
              self._processes.append(t)
              t.start()
             
-    def _threaded_process_next(self, callback) -> None:
+    def _threaded_process_next(self, callback, check_locality=False) -> None:
         """
         Get the next file from the SAM project and run callback(file)
         Done in a thread for each parallel process. Once complete,
@@ -138,6 +165,11 @@ class SAMProjectManager:
             next_file = self._client.getNextFile(self._url, process_id)
             if not next_file:
                 break
+
+            if check_locality:
+                if not 'ONLINE' in file_locality(next_file):
+                    logger.warning(f'File {next_file} is not found on disk. Skipping.')
+                    continue
 
             # do something with file
             if callback is not None:

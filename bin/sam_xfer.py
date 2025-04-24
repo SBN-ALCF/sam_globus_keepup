@@ -3,6 +3,7 @@
 """
 Copies new files from dCache to this node using ifdh, then sends them to
 Polaris at ALCF via GLOBUS
+Modified from sbnd_keepup.py to ignore run number, and use a different data set
 """
 
 import time
@@ -10,6 +11,7 @@ import sys
 import os
 import pathlib
 import functools
+import hashlib
 from typing import Optional
 
 from sam_globus_keepup import EXPERIMENT, IFDH_Client
@@ -23,25 +25,29 @@ from sam_globus_keepup.utils import run_path, check_env, du
 import logging
 logger = logging.getLogger(__name__)
 
-SAM_PROJECT_BASE = 'globus_dtn_xfer_test3'
-SAM_DATASET = "sbnd_keepup_from_17600_raw_Nov06"
+SAM_PROJECT_BASE = 'globus_dtn_xfer_test5'
+SAM_DATASET = "MCP2025Av3_DevSample_bnblight_v10_04_06_01_larcvreco1"
 
-SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
+SCRATCH_PATH = pathlib.Path('/ceph/sbnd/misc')
 
-# a pure path because the destination file system is not mounted on this machine
-# this version is for the mapped collection alcf#dtn_eagle
-# EAGLE_PATH = pathlib.PurePosixPath('/neutrinoGPU/sbnd/data')
-
-# this version is for the guest collection which has /neutrinoGPU/sbnd/data at the root
-EAGLE_PATH = pathlib.PurePosixPath('/')
+EAGLE_PATH = pathlib.PurePosixPath('/larcv')
 
 BUFFER_KB = 100 * 1024 * 1024 
 GLOBUS_NFILE_MAX = 2000
 
 
-def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
-    """Return 6-digit directory structure for run number ABCDE as 0AB000/0ABC00/0ABCDE."""
-    return pathlib.PurePosixPath(*[f'{p * int(run_number / p):06d}' for p in (1000, 100, 1)])
+def hash_path(filename: pathlib.Path):
+    """Return a path based on the first two digits of the filename's hash.
+    Note that this function might be given a protocol path as str (XXXX://...)
+    or a pathlib path. Try to use pathlib, otherwise just split."""
+
+    basename = filename
+    try:
+        basename = filename.name
+    except AttributeError:
+        basename = filename.split("/")[-1]
+
+    return hashlib.sha256(basename.encode('utf-8')).hexdigest()[:2]
 
 
 def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_is_dir: bool=True):
@@ -54,9 +60,7 @@ def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_
 
     if dest_is_dir:
         # directory based on run number from file name
-        result = SBND_RAWDATA_REGEXP.match(fname)
-        run_number = int(result.groups()[0])
-        dest = dest_base / run_path(run_number)
+        dest = dest_base / hash_path(fname)
         dest.mkdir(parents=True, exist_ok=True)
 
     IFDH_Client.cp([fname, str(dest)])
@@ -64,13 +68,11 @@ def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_
 
 def scratch_eagle_paths(filename: str):
     """Return corresponding paths on both scratch and eagle for filename."""
-    result = SBND_RAWDATA_REGEXP.match(str(filename))
-    run_number = int(result.groups()[0])
-    srcdir = SCRATCH_PATH / run_path(run_number)
+    srcdir = SCRATCH_PATH / hash_path(filename)
 
     f_basename = pathlib.PurePath(filename).name
 
-    eagle_dest = EAGLE_PATH / eagle_run_path(run_number)
+    eagle_dest = EAGLE_PATH / hash_path(filename)
     return srcdir / f_basename, eagle_dest / f_basename
 
 
@@ -174,7 +176,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
 
 if __name__ == '__main__':
     logging_fmt = '[%(asctime)s] (%(levelname)s) %(name)s: %(message)s'
-    logging.basicConfig(filename='sbnd_keepup.log',
+    logging.basicConfig(filename='sam_xfer.log',
             format=logging_fmt, filemode='a',level=logging.DEBUG)
 
     stdout_handler = logging.StreamHandler(sys.stdout)
