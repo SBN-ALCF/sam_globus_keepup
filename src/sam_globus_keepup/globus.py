@@ -47,7 +47,6 @@ class GLOBUSSessionManager:
     def __enter__(self):
         logger.debug('Trying to establish transfer client')
         self.client = self._get_transfer_client()
-        print('here')
 
         # check if we need additional scopes
         consent_required_scopes = []
