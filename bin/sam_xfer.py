@@ -25,15 +25,15 @@ from sam_globus_keepup.utils import run_path, check_env, du
 import logging
 logger = logging.getLogger(__name__)
 
-SAM_PROJECT_BASE = 'globus_dtn_xfer_test5'
-SAM_DATASET = "MCP2025Av3_DevSample_bnblight_v10_04_06_01_larcvreco1"
+SAM_PROJECT_BASE = 'globus_dtn_xfer_test7'
+SAM_DATASET = "gputnam-Run4-bnbmajority-prestage-A"
 
-SCRATCH_PATH = pathlib.Path('/ceph/sbnd/misc')
+SCRATCH_PATH = pathlib.Path('/srv/globus/icarus/run4')
 
-EAGLE_PATH = pathlib.PurePosixPath('/larcv')
+EAGLE_PATH = pathlib.PurePosixPath('/icarus/run4')
 
 BUFFER_KB = 100 * 1024 * 1024 
-GLOBUS_NFILE_MAX = 2000
+GLOBUS_NFILE_MAX = 50
 
 
 def hash_path(filename: pathlib.Path):
@@ -106,7 +106,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
             nfiles_outstanding += 1
-            if nfiles_outstanding >= 2000:
+            if nfiles_outstanding >= GLOBUS_NFILE_MAX:
                 logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
                 globus_session.submit()
                 time.sleep(10)
@@ -123,7 +123,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
             # start file transfer with SAM + ifdh
             # wait a few seconds for files to appear in the queue
             sam_callback = functools.partial(ifdh_cp_run_number, dest_base=SCRATCH_PATH)
-            sam_project.start(callback=sam_callback)
+            sam_project.start(callback=sam_callback, check_locality=True)
             time.sleep(10)
 
             nfiles = 0

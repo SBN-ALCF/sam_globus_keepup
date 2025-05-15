@@ -8,6 +8,7 @@ import time
 import pathlib
 # import threading
 import queue
+import requests
 import multiprocessing
 from datetime import datetime
 from typing import Optional
@@ -38,12 +39,13 @@ def file_locality(fname: str) -> str:
     if '/' in fname:
         fname = fname.split('/')[-1]
 
-    file_path_str = SAMWeb_Client.getFileAccessUrls(fname, schema='file')
+    file_path_str = SAMWeb_Client.getFileAccessUrls(fname, schema='file')[0]
+    print(file_path_str)
     if not file_path_str:
         raise RuntimeError(f'Could not get file locality for {fname}. Is it declared to SAM?')
 
     # extract URL from xroot string
-    path = pathlib.PurePath(result[0].split('file://')[1]).relative_to('/pnfs')
+    path = pathlib.PurePath(file_path_str.split('file://')[1]).relative_to('/pnfs')
     request_url = f'{API_URL}/{path}?locality=True'
 
     # need to set verify=False
@@ -119,7 +121,7 @@ class SAMProjectManager:
             return self
 
         # name, station, dataset, user, group
-        _url = self._client.startProject(self.project_name, EXPERIMENT, self.dataset, "sbndpro", EXPERIMENT)
+        _url = self._client.startProject(self.project_name, EXPERIMENT, self.dataset, "icaruspro", EXPERIMENT)
         time.sleep(2)
         self._url = self._client.findProject(self.project_name, EXPERIMENT)
         logger.info(f"Project started with {self._url=}")
@@ -141,7 +143,7 @@ class SAMProjectManager:
         snap_id = self._samweb_client.projectSummary(self._url)['snapshot_id']
         logger.info(f'finished with {snap_id=}')
 
-    def start(self, callback=None):
+    def start(self, callback=None, check_locality=False):
         """Start processes for copying files. Once they are copied, add them to our queue."""
         if self.nfiles == 0:
             logger.info(f"No files to process, not starting.")
@@ -149,7 +151,7 @@ class SAMProjectManager:
 
         self._processes = []
         for i in range(self._parallel):
-             t = multiprocessing.Process(target=self._threaded_process_next, args=(callback,))
+             t = multiprocessing.Process(target=self._threaded_process_next, args=(callback, check_locality))
              self._processes.append(t)
              t.start()
             
@@ -160,7 +162,7 @@ class SAMProjectManager:
         file is added to this object's queue.
         """
         # url, appname, appversion, dest, user
-        process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", "sbndpro") #, schemas="http")
+        process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", "icaruspro") #, schemas="http")
         while True:
             next_file = self._client.getNextFile(self._url, process_id)
             if not next_file:
