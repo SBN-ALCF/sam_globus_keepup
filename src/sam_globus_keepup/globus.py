@@ -30,7 +30,10 @@ class GLOBUSSessionManager:
     def __init__(self, client_id: str, src_endpoint: str, dest_endpoint: str):
         logger.info('Initializing GLOBUS manager.')
 
-        self.auth_client = globus_sdk.NativeAppAuthClient(client_id)
+        # auth_client is only needed for native app authorization, i.e., not
+        # needed for a services account (see _get_transfer_client method)
+        # self.auth_client = globus_sdk.NativeAppAuthClient(client_id)
+
         self.client = None
         self.src_endpoint = src_endpoint
         self.dest_endpoint = dest_endpoint
@@ -65,20 +68,16 @@ class GLOBUSSessionManager:
         """Get tokens via web authentication, then read token data to construct
         transfer client with proper authorization."""
 
-        '''
         client_id = check_env("GLOBUS_API_CLIENT_ID")
         client_secret = check_env("GLOBUS_APP_SECRET")
         app = globus_sdk.ClientApp(
             "SBND Keepup Transfer", client_id=client_id, client_secret=client_secret,
         )
 
-        app = globus_sdk.UserApp(
-            "SBND Keepup Transfer", client_id=client_id
-        )
-        print(scopes)
         return globus_sdk.TransferClient(app=app, app_scopes=scopes)
-        '''
 
+        '''
+        # Native app authorization
         self.auth_client.oauth2_start_flow(requested_scopes=scopes, refresh_tokens=True)
 
         authorize_url = self.auth_client.oauth2_get_authorize_url()
@@ -98,10 +97,12 @@ class GLOBUSSessionManager:
         )
 
         return globus_sdk.TransferClient(authorizer=authorizer)
+        '''
 
     def _required_scopes(self, target: str) -> List:
         """Try to perform an `ls` of the endpoint to check which scopes are needed to access it."""
         try:
+            # print(self.client._app.scope_requirements)
             self.client.operation_ls(target, path="/")
         except globus_sdk.TransferAPIError as err:
             if err.info.consent_required:

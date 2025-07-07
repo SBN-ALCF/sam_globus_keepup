@@ -114,7 +114,7 @@ class IFDHProjectManager:
             return None
 
         try:
-            item = self._queue.get(block=False)
+            item = self._done_queue.get(block=False)
         except queue.Empty:
             logger.debug(f'failed to get file within {timeout} s')
             return None
