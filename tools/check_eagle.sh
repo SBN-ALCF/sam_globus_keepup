@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # Get list of files in DEFINITION that are not present on eagle
+# note: requires alcf user account
+ALCF_USER="twester"
 
 if ! type -P samweb > /dev/null; then
 	echo "samweb not found!"
@@ -27,8 +29,8 @@ echo "Snapshot ID is: ${SNAP_ID} (${NFILES_DEF} files)"
 SAM_LIST=$(mktemp)
 EAGLE_LIST=$(mktemp)
 echo "Writing file lists to SAM=${SAM_LIST} and EAGLE=${EAGLE_LIST}"
-EAGLE_PATH="/lus/eagle/projects/neutrinoGPU/sbnd/data/larcv/${DEFINITION}"
+EAGLE_PATH="/lus/eagle/projects/neutrinoGPU/sbnd/mc/larcv/${DEFINITION}"
 samweb list-files "snapshot_id ${SNAP_ID}" | sort > ${SAM_LIST}
-ssh ${USER}@polaris.alcf.anl.gov "find ${EAGLE_PATH} -type f -exec basename {} \;" | sort > ${EAGLE_LIST}
+ssh ${ALCF_USER}@polaris.alcf.anl.gov "find ${EAGLE_PATH} -type f -exec basename {} \;" | sort > ${EAGLE_LIST}
 
 diff ${SAM_LIST} ${EAGLE_LIST}
