@@ -112,12 +112,12 @@ def update_metadata(metadata: dict, filename: pathlib.Path, do_file_size=True, d
     # ...
     result['file_format'] = 'artroot' 
     result['data_tier'] = 'reconstructed'
-    result['application'] = { 'family': 'art', 'name': 'reco1', 'version': 'v10_06_02' }
-    result['fcl.name'] = "prodgenie_corsika_proton_rockbox_ccnue_sbnd.fcl/standard_g4_rockbox_sbnd.fcl/standard_detsim_sbnd.fcl/standard_reco1_sbnd.fcl"
+    result['application'] = { 'family': 'art', 'name': 'reco2', 'version': 'v10_06_02' }
+    result['fcl.name'] = "prodgenie_corsika_proton_rockbox_ccnue_sbnd.fcl/standard_g4_rockbox_sbnd.fcl/standard_detsim_sbnd.fcl/standard_reco1_sbnd.fcl/standard_reco2_sbnd.fcl"
     result['production.name'] = 'MCP2025B_NueCC'
     result['production.type'] = 'aurora'
     result['file_name'] = filename.name
-    del result['parents']
+    # del result['parents']
 
     return result
 
@@ -157,19 +157,21 @@ def _transfer_callback(_queue: multiprocessing.Queue, dest: pathlib.Path, relati
 
     while True:
         try:
-            item = _queue.get(timeout=1)
+            item = _queue.get(timeout=30)
         except queue.Empty:
             break
         result = ifdh_cp(item, dest, relative_to=relative_to)
 
         if delete and (result == 0 or result == 17):
             meta_filename = metadata_file(item)
-            logger.info(f"Removing {item} and metadata file {meta_filename}")
+            logger.info(f"{pid=} Removing {item} and metadata file {meta_filename}")
             item.unlink()
             try:
                 meta_filename.unlink()
             except FileNotFoundError:
-                logger.warning(f"Could not remove metadata file {meta_filename}, not found")
+                logger.warning(f"{pid=} Could not remove metadata file {meta_filename}, not found")
+    
+    logger.info(f'Transfer process {pid=} end')
 
 
 def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multiprocessing.Queue, dest: pathlib.Path, relative_to: pathlib.Path, validate=False, delete=False):
@@ -187,14 +189,14 @@ def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multip
     nskip = 0
     while True:
         try:
-            item = _file_queue.get(block=False)
+            item = _file_queue.get(timeout=10)
         except queue.Empty:
             break
 
         logger.debug(f'{pid=} Got {item}')
         now = datetime.now()
 
-        loc = dest_path(item, dest, relative_to)
+        loc = dest_path(item, dest, relative_to).parent
         try:
             declare_file(item, loc, validate, delete)
             logger.info(f'{pid=} Declared {item}.')
@@ -207,6 +209,9 @@ def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multip
             nskip += 1
         except MetadataNotFoundException:
             logger.warning(f'{pid=} Skipping {item}, metadata not found.')
+            nskip += 1
+        except samweb_client.exceptions.InvalidMetadata as e:
+            logger.warning(f'{pid=} Skipping {item}, metadata invalid ({e}).')
             nskip += 1
 
         last_request = datetime.now()
@@ -222,6 +227,7 @@ def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multip
             time.sleep(wait)
 
     # _result.put((ndeclared, nskip))
+    logger.info(f'Declare process {pid=} end')
 
 
 def main(args: dict) -> None:
