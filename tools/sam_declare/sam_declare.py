@@ -37,6 +37,8 @@ SAM_RPS_MAX = 5.0 # max requests per second per process
 NFILES_MIN = 10 # only spawn a new process after seeing at least this many files
 SMEAR_MAX = 1.1 # random factor to smear out the time between requests. Set to 1 for no smearing
 
+HEARTBEAT = '__heartbeat__'
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,8 +62,8 @@ def require_file(filename:pathlib.Path) -> None:
     if filename.is_dir():
         raise IsADirectoryError(f'{filename} is a directory.')
 
-    if not filename.is_file():
-        raise FileNotFoundError(f'Error accessing {filename}. Does it exist?')
+    # if not filename.is_file():
+    #     raise FileNotFoundError(f'Error accessing {filename}. Does it exist?')
 
 
 def file_size(filename: pathlib.Path) -> int:
@@ -87,7 +89,7 @@ def dest_path(fname: pathlib.Path, dest_base: Optional[pathlib.PurePosixPath]=No
     if relative_to is not None:
         dir_append = fname.parent.relative_to(relative_to)
 
-    return dest / dir_append / fname.name
+    return dest / dir_append / get_filename(fname).name
 
 
 def metadata_file(filename: pathlib.Path) -> pathlib.Path:
@@ -97,48 +99,154 @@ def metadata_file(filename: pathlib.Path) -> pathlib.Path:
     return filename.with_suffix('.'.join([stem, 'json']))
 
 
-def update_metadata(metadata: dict, filename: pathlib.Path, do_file_size=True, do_checksum=True) -> dict:
-    """Return metadata dict with common additions: file size & checksums."""
-    result = metadata.copy()
+def get_filename(filename: pathlib.Path) -> pathlib.Path:
+    """Wrapper to get the file's ultimate name, even if different from the original."""
+    newname = filename.name.replace('reco1', 'stage0')
+    newname = newname.replace('reco2', 'stage1')
+    newname = newname.replace('Supplemental', 'hist')
+    return filename.parent / newname
+
+
+def get_metadata(filename: pathlib.Path, do_file_size=True, do_checksum=True) -> dict:
+    """
+    Return metadata dict including common additions: file size & checksums.
+    This function is sprawling because it handles all the different cases, probably better to refactor
+    """
+    result = {}
+    # SBND
+    # common
+    result['group'] = 'sbnd'
+    result["sbnd_project.software"]: "sbndcode"
+    VERSION = 'v10_06_00_10'
+
+    # handle cases based on filename
+    fname = filename.stem
+    if fname.startswith('hist'):
+        raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
+    else:
+        # expect other files to have an associated .json file
+        meta_filename = metadata_file(filename)
+
+        if not meta_filename.is_file():
+            raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!.')
+
+        with open(meta_filename, 'r') as f:
+            result = json.load(f)
+
+        result['file_format'] = 'artroot'
+        result['file_type'] = 'data'
+        result['data_tier'] = 'reconstructed'
+        result['production.type'] = 'aurora'
+        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
+        result["icarus_project.version"]: VERSION
+        result["production.name"]: "offline"
+
+        if fname.startswith('reco1'):
+            raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
+        elif fname.startswith('reco2'):
+            result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
+            result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
+            result["icarus_project.stage"] = "stage1"
+            del result['parents']
+
+    """
+    # ICARUS
+    # common
+    result['group'] = 'icarus'
+    result["icarus_project.software"]: "icaruscode"
+    VERSION = 'v10_06_00_01p05'
+
+    # handle cases based on filename
+    fname = filename.stem
+    if fname.startswith('Supplemental'):
+        # no json file; we'll do our best to get metadata from the file name
+        # this extracts the raw data filename from the hist file name
+        parent_name = '_'.join(filename.name.split('Supplemental-')[1].split('-stage1.root')[0].split('_')[:-1]) + '.root'
+
+        result['file_type'] = 'data'
+        result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
+        result['production.type'] = 'polaris'
+        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
+        result["icarus_project.version"]: VERSION
+        if fname.endswith('stage0'):
+            result['file_format'] = 'purity'
+            result['application'] = { 'family': 'art', 'name': 'stage0', 'version': VERSION }
+            result['parents'] = [{'file_name': parent_name}]
+        elif fname.endswith('stage1'):
+            result['file_format'] = 'calib_ntuples'
+            result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
+            result['parents'] = [{'file_name': 'stage1-000-' + get_filename(filename.parent / parent_name).name}]
+        else:
+            raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
+    else:
+        # expect other files to have an associated .json file
+        meta_filename = metadata_file(filename)
+
+        if not meta_filename.is_file():
+            raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!.')
+
+        with open(meta_filename, 'r') as f:
+            result = json.load(f)
+
+        result['file_format'] = 'artroot'
+        result['file_type'] = 'data'
+        result['data_tier'] = 'reconstructed'
+        result['production.type'] = 'polaris'
+        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
+        result["icarus_project.version"]: VERSION
+        result["production.name"]: "offline"
+
+        if fname.startswith('reco1'):
+            result['application'] = { 'family': 'art', 'name': 'stage0', 'version': VERSION }
+            result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
+            result["icarus_project.stage"] = "stage0"
+            result["data_stream"] = "bnbmajority"
+            result["art.process_name"] = "stage0"
+        elif fname.startswith('reco2'):
+            result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
+            result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
+            result["icarus_project.stage"] = "stage1"
+            result['parents'][0]['file_name'] = result['parents'][0]['file_name'].replace('reco1', 'stage0')
+    """
+
+    # file name replacements
+    result['file_name'] = get_filename(filename).name
 
     if do_file_size:
         result['file_size'] = file_size(filename)
+    else:
+        result['file_size'] = 0
 
     if do_checksum:
         result['checksum'] = samweb_client.utility.fileChecksum(\
                 str(filename), checksum_types=['enstore', 'adler32', 'md5'])
 
-    # add extra modifications here
-    # ...
-    result['file_format'] = 'artroot' 
-    result['data_tier'] = 'reconstructed'
-    result['application'] = { 'family': 'art', 'name': 'reco2', 'version': 'v10_06_02' }
-    result['fcl.name'] = "prodgenie_corsika_proton_rockbox_ccnue_sbnd.fcl/standard_g4_rockbox_sbnd.fcl/standard_detsim_sbnd.fcl/standard_reco1_sbnd.fcl/standard_reco2_sbnd.fcl"
-    result['production.name'] = 'MCP2025B_NueCC'
-    result['production.type'] = 'aurora'
-    result['file_name'] = filename.name
-    # del result['parents']
-
     return result
 
 
-def declare_file(filename: pathlib.Path, dest: pathlib.Path, validate=False, delete=False):
-    """Declare a file to SAM & add its file location."""
-    meta_filename = metadata_file(filename)
-    if not meta_filename.is_file():
-        raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!.')
+def is_virtual_file(fname: pathlib.Path) -> bool:
+    return fname.name.startswith('stage1') or fname.name.startswith('reco2')
 
-    with open(meta_filename, 'r') as f:
-        d = json.load(f)
-        d = update_metadata(d, filename)
+
+def declare_file(filename: pathlib.Path, dest: pathlib.Path, validate=False, delete=False):
+    """Declare a file to SAM & add its file location. Several exceptions to not copy back reco2/stage1 files"""
+    dest_filename = get_filename(filename)
+
+    is_virtual = is_virtual_file(dest_filename)
+    do_file_ops = not is_virtual
+    d = get_metadata(filename, do_file_size=do_file_ops, do_checksum=do_file_ops)
 
     if validate:
         SAMWeb_Client.validateFileMetadata(d)
 
     SAMWeb_Client.declareFile(d)
-    SAMWeb_Client.addFileLocation(filename.name, dest)
+    if not is_virtual:
+        SAMWeb_Client.addFileLocation(dest_filename.name, dest)
+    else:
+        logger.info(f'NOT adding file location for virtual file {filename}')
 
     if delete:
+        meta_filename = metadata_file(filename)
         meta_filename.unlink()
 
 
@@ -160,16 +268,33 @@ def _transfer_callback(_queue: multiprocessing.Queue, dest: pathlib.Path, relati
             item = _queue.get(timeout=30)
         except queue.Empty:
             break
+
+        if item == HEARTBEAT:
+            logger.debug(f"{pid=} got heartbeat")
+            continue
+
         result = ifdh_cp(item, dest, relative_to=relative_to)
 
-        if delete and (result == 0 or result == 17):
-            meta_filename = metadata_file(item)
-            logger.info(f"{pid=} Removing {item} and metadata file {meta_filename}")
+        if result != 0 and result != 17:
+            continue
+
+        logger.info(f"{pid=} transfer of {item} finished ({result=})")
+        if not delete:
+            continue 
+
+        meta_filename = metadata_file(item)
+        logger.info(f"{pid=} Removing {item} and metadata file {meta_filename}")
+        try:
             item.unlink()
-            try:
-                meta_filename.unlink()
-            except FileNotFoundError:
-                logger.warning(f"{pid=} Could not remove metadata file {meta_filename}, not found")
+        except PermissionError:
+            logger.warning(f"{pid=} Removing {item} failed: Permission denied")
+
+        try:
+            meta_filename.unlink()
+        except FileNotFoundError:
+            logger.warning(f"{pid=} Could not remove metadata file {meta_filename}, not found")
+        except PermissionError:
+            logger.warning(f"{pid=} Removing {meta_filename} failed: Permission denied")
     
     logger.info(f'Transfer process {pid=} end')
 
@@ -201,17 +326,30 @@ def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multip
             declare_file(item, loc, validate, delete)
             logger.info(f'{pid=} Declared {item}.')
             ndeclared += 1
-            _declare_queue.put(item)
+            is_virtual = is_virtual_file(item)
+            if not is_virtual:
+                _declare_queue.put(item)
+            else:
+                logger.info(f'NOT transferring stage1 file {item}')
         except samweb_client.exceptions.FileAlreadyExists:
             logger.warning(f'{pid=} Skipping {item}, already declared.')
             # even if already declared, file may not be transferred, so queue it anyway
-            _declare_queue.put(item)
+            if not is_virtual:
+                _declare_queue.put(item)
+            else:
+                logger.info(f'NOT transferring stage1 file {item}')
             nskip += 1
         except MetadataNotFoundException:
             logger.warning(f'{pid=} Skipping {item}, metadata not found.')
+            _declare_queue.put(HEARTBEAT)
             nskip += 1
         except samweb_client.exceptions.InvalidMetadata as e:
             logger.warning(f'{pid=} Skipping {item}, metadata invalid ({e}).')
+            _declare_queue.put(HEARTBEAT)
+            nskip += 1
+        except FileNotFoundError as e:
+            logger.warning(f'{pid=} Skipping {item}, file not found ({e}).')
+            _declare_queue.put(HEARTBEAT)
             nskip += 1
 
         last_request = datetime.now()
@@ -243,6 +381,8 @@ def main(args: dict) -> None:
         raise RuntimeError(f'Recusive mode requested but {filename} is not a directory.')
 
     tstart = datetime.now()
+    # reco2/stage1: declare json file, don't transfer the file
+    # files = filename.rglob('*json')
     files = filename.rglob('*[!json]')
     nprocesses = 0
 
@@ -263,11 +403,16 @@ def main(args: dict) -> None:
     for f in files:
         if not f.is_file():
             continue
+        if f.name.startswith('Supplemental'):
+            continue
         logger.debug(f'adding {f}')
-
-        file_queue.put(f)
+        stage1_fname = f.with_suffix('')
         nfiles_reset += 1
         nfiles += 1
+        file_queue.put(f)
+
+        # for reco2/stage1
+        # file_queue.put(stage1_fname)
 
         # spawn a new process for files until we reach the max number
         # of processes. New process is only spawned once there are at least
@@ -341,6 +486,8 @@ if __name__ == '__main__':
     parser.add_argument('-R', '--recursive', action='store_true', help='If filename is a directory, glob for files within.')
     parser.add_argument('-V', '--validate', action='store_true', help='Validate metadata before declaring')
     parser.add_argument('-d', '--delete', action='store_true', help='Remove file & json file after declaration and transfer')
+    # parser.add_argument('-s', '--scan', action='store_true', help='With -R, periodically rescan directory for new files.')
+    # parser.add_argument('-p', '--pattern', help='Match filenames by a pattern. Can speed up scanning directories with lots of files.')
     args = parser.parse_args()
 
     main(args)
