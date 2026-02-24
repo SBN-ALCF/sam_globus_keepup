@@ -77,15 +77,15 @@ def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
     return pathlib.PurePosixPath(*[f'{p * int(run_number / p):06d}' for p in (1000, 100, 1)])
 
 
-def scratch_eagle_paths(filename: str):
+def scratch_eagle_paths(filename: str, scratch_path: pathlib.Path, eagle_path: pathlib.Path):
     """Return corresponding paths on both scratch and eagle for filename."""
     result = SBND_RAWDATA_REGEXP.match(str(filename))
     run_number = int(result.groups()[0])
-    srcdir = SCRATCH_PATH / hash_path(filename, n=2)
+    srcdir = scratch_path / hash_path(filename, n=2)
 
     f_basename = pathlib.PurePath(filename).name
 
-    eagle_dest = EAGLE_PATH / eagle_run_path(run_number)
+    eagle_dest = eagle_path / eagle_run_path(run_number)
     return srcdir / f_basename, eagle_dest / f_basename
 
 
@@ -176,7 +176,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
                 nfiles += 1
                 nsleep = 0
 
-                src, dest = scratch_eagle_paths(f)
+                src, dest = scratch_eagle_paths(f, scratch_path, dest_path)
                 globus_session.add_file(src, dest)
 
                 # don't start a new transfer until we have BUFFER_KB of data

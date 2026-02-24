@@ -126,6 +126,19 @@ class GLOBUSSessionManager:
         
         return []
 
+    def ls(self, endpoint=None, path=None) -> None:
+        """User-visible way to check the endpoint"""
+        if endpoint is None:
+            endpoint = self.dest_endpoint
+        if path is None:
+            path = "/"
+
+        # support posixpath from pathlib
+        if not isinstance(path, str):
+            path = str(path)
+
+        return self.client.operation_ls(endpoint, path=path)
+
     def add_manifest(self, manifest_filename: str) -> None:
         """Add files from a manifest with SRC and DEST for each file on a
         separate line, similar to the GLOBUS CLI"""
