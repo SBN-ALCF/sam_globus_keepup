@@ -1,19 +1,23 @@
 #!/usr/bin/env python
 
 """
-Copies new files from dCache to this node using ifdh, then sends them to
-Polaris at ALCF via GLOBUS
+Copies new files from dCache to this node using ifdh+SAM, then sends them to
+Polaris or other GLOBUS endpoint
 """
 
+import argparse
 import time
 import sys
 import os
 import pathlib
 import functools
+import hashlib
+import textwrap
 from typing import Optional
 
+import globus_sdk
 from sam_globus_keepup import EXPERIMENT, IFDH_Client
-from sam_globus_keepup.sam import SAMProjectManager
+from sam_globus_keepup.sam_derived import SAMProjectManager
 from sam_globus_keepup.globus import GLOBUSSessionManager
 from sam_globus_keepup.mon import NetworkMonitor
 
@@ -23,29 +27,37 @@ from sam_globus_keepup.utils import run_path, check_env, du
 import logging
 logger = logging.getLogger(__name__)
 
-SAM_PROJECT_BASE = 'globus_dtn_xfer_test3'
-SAM_DATASET = "sbnd_keepup_from_17600_raw_Nov06"
+
+SAM_PROJECT_BASE = 'globus_dtn_xfer'
+# SAM_DATASET = "sbnd_keepup_from_19549_raw_Oct27"
 
 SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
 
-# a pure path because the destination file system is not mounted on this machine
-# this version is for the mapped collection alcf#dtn_eagle
-# EAGLE_PATH = pathlib.PurePosixPath('/neutrinoGPU/sbnd/data')
-
 # this version is for the guest collection which has /neutrinoGPU/sbnd/data at the root
-EAGLE_PATH = pathlib.PurePosixPath('/')
+EAGLE_PATH = pathlib.PurePosixPath('/data')
 
 BUFFER_KB = 100 * 1024 * 1024 
-GLOBUS_NFILE_MAX = 2000
+GLOBUS_NFILE_MAX = 500
 
 
-def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
-    """Return 6-digit directory structure for run number ABCDE as 0AB000/0ABC00/0ABCDE."""
-    return pathlib.PurePosixPath(*[f'{p * int(run_number / p):06d}' for p in (1000, 100, 1)])
+def hash_path(filename: pathlib.Path, n: int=1):
+    """Return a path based on the first two digits of the filename's hash.
+    Note that this function might be given a protocol path as str (XXXX://...)
+    or a pathlib path. Try to use pathlib, otherwise just split."""
+
+    basename = filename
+    try:
+        basename = filename.name
+    except AttributeError:
+        basename = filename.split("/")[-1]
+
+    return pathlib.PurePosixPath(
+            *textwrap.wrap(hashlib.sha256(basename.encode('utf-8')).hexdigest()[:2 * n], 2)
+    )
 
 
-def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_is_dir: bool=True):
-    """Variation of ifdh_cp function but we use the file name to set the output path."""
+def ifdh_cp_scratch(fname: str, dest_base: Optional[pathlib.Path]=None, dest_is_dir: bool=True):
+    """For copying to scratch use a hash of the file name to set the output path."""
     dest = dest_base
     if dest_base is None:
         # use current directory
@@ -54,19 +66,22 @@ def ifdh_cp_run_number(fname: str, dest_base: Optional[pathlib.Path]=None, dest_
 
     if dest_is_dir:
         # directory based on run number from file name
-        result = SBND_RAWDATA_REGEXP.match(fname)
-        run_number = int(result.groups()[0])
-        dest = dest_base / run_path(run_number)
+        dest = dest_base / hash_path(fname, n=2)
         dest.mkdir(parents=True, exist_ok=True)
 
     IFDH_Client.cp([fname, str(dest)])
+
+
+def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
+    """Return 6-digit directory structure for run number ABCDE as 0AB000/0ABC00/0ABCDE."""
+    return pathlib.PurePosixPath(*[f'{p * int(run_number / p):06d}' for p in (1000, 100, 1)])
 
 
 def scratch_eagle_paths(filename: str):
     """Return corresponding paths on both scratch and eagle for filename."""
     result = SBND_RAWDATA_REGEXP.match(str(filename))
     run_number = int(result.groups()[0])
-    srcdir = SCRATCH_PATH / run_path(run_number)
+    srcdir = SCRATCH_PATH / hash_path(filename, n=2)
 
     f_basename = pathlib.PurePath(filename).name
 
@@ -74,53 +89,64 @@ def scratch_eagle_paths(filename: str):
     return srcdir / f_basename, eagle_dest / f_basename
 
 
-def main():
+def main(args):
     check_env("IFDH_PROXY_ENABLE", '0')
 
     client_id = check_env("GLOBUS_API_CLIENT_ID")
     src_endpoint = check_env("GLOBUS_CEPHFS_COLLECTION_ID")
-    dest_endpoint = check_env("GLOBUS_EAGLE_COLLECTION_ID")
+    # dest_endpoint = check_env("GLOBUS_EAGLE_COLLECTION_ID")
 
-    nm1 = NetworkMonitor('eno1', 60, 'ip_log_eno1.txt')
-    nm2 = NetworkMonitor('eno2', 60, 'ip_log_eno2.txt')
-    nm1.start()
-    nm2.start()
+    if args.network_monitor:
+        nm1 = NetworkMonitor('eno1', 60, 'ip_log_eno1.txt')
+        nm2 = NetworkMonitor('eno2', 60, 'ip_log_eno2.txt')
+        nm1.start()
+        nm2.start()
 
-    main_loop(client_id, src_endpoint, dest_endpoint)
+    main_loop(
+        client_id, src_endpoint, args.endpoint, args.destination, 
+        args.dataset, args.project, args.scratch_dir
+    )
 
-    # accumulate a few data points from the network monitors after all transfers conclude
-    time.sleep(600)
+    if args.network_monitor:
+        # accumulate a few data points from the network monitors after all transfers conclude
+        time.sleep(600)
+        nm1.stop()
+        nm2.stop()
 
-    nm1.stop()
-    nm2.stop()
 
-
-def main_loop(client_id, src_endpoint, dest_endpoint):
+def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, project_base, scratch_path):
     # check if there are outstanding files. If so, try to transfer these before starting SAM
     with GLOBUSSessionManager(client_id, src_endpoint, dest_endpoint) as globus_session:
+
+        # this will throw if the path doesn't exist
+        globus_session.ls(path=dest_path)
+
         logger.debug(f"Checking for outstanding files at {SCRATCH_PATH}...")
         nfiles_outstanding = 0 
         for f in SCRATCH_PATH.glob('**/*.root'):
             src, dest = scratch_eagle_paths(f)
             globus_session.add_file(src, dest)
             nfiles_outstanding += 1
-            if nfiles_outstanding >= 2000:
+            if nfiles_outstanding >= GLOBUS_NFILE_MAX:
                 logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
                 globus_session.submit()
                 time.sleep(10)
                 globus_session.wait()
                 nfiles_outstanding = 0
+            elif nfiles_outstanding == 0:
+                logger.info("No outstanding files.")
+
+        logger.info("Starting transfer manager.")
 
         # start SAM project once all outstanding files have been transferred
-
-        with SAMProjectManager(project_base=SAM_PROJECT_BASE, dataset=SAM_DATASET, parallel=8) as sam_project:
+        with SAMProjectManager(project_base=project_base, dataset=dataset, parallel=8, sam_user='sbndpro') as sam_project:
             if sam_project.nfiles == 0:
                 logger.info(f"SAM project has no files, exiting.")
                 return
 
             # start file transfer with SAM + ifdh
             # wait a few seconds for files to appear in the queue
-            sam_callback = functools.partial(ifdh_cp_run_number, dest_base=SCRATCH_PATH)
+            sam_callback = functools.partial(ifdh_cp_scratch, dest_base=scratch_path)
             sam_project.start(callback=sam_callback)
             time.sleep(10)
 
@@ -183,4 +209,17 @@ if __name__ == '__main__':
     stdout_handler.setFormatter(formatter)
     root = logging.getLogger()
     root.addHandler(stdout_handler)
-    main()
+
+    parser = argparse.ArgumentParser(
+        prog='sam_globus_transfer',
+        description='Move files to local node via IFDH+SAM, then move them to a GLOBUS endpoint. Uses GLOBUS_API_CLIENT_ID environment variable for authorization, and GLOBUS_CEPHFS_COLLECTION_ID envrionment variable for staging files.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument('dataset', help='SAM dataset to transfer')
+    parser.add_argument('endpoint', help='GLOBUS destination endpoint UUID')
+    parser.add_argument('destination', help='Destination path relative to GLOBUS endpoint')
+    parser.add_argument('--project', help='Override the default SAM project base name. Files will be transferred again if they were previously transferred under a different project.', nargs=1, default=SAM_PROJECT_BASE)
+    parser.add_argument('--scratch-dir', help='Override the default scratch directory', nargs=1, default='/ceph/sbnd')
+    parser.add_argument('--network-monitor', action='store_true', help='Enable network monitoring')
+    args = parser.parse_args()
+    main(args)
