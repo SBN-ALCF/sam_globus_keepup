@@ -18,7 +18,7 @@ import queue
 import tempfile
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import samweb_client
@@ -27,7 +27,7 @@ import samweb_client.utility
 import ifdh
 
 
-SAMWeb_Client = samweb_client.SAMWebClient()
+SAMWeb_Client = samweb_client.SAMWebClient(experiment='sbn')
 IFDH_Client = ifdh.ifdh()
 
 TRANSFER_NPROCESS_MAX = 10 # max processes
@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 class MetadataNotFoundException(Exception):
     pass
 
+class CouldNotParseMetadataException(Exception):
+    pass
 
 try:
     EXPERIMENT = os.environ["EXPERIMENT"]
@@ -113,69 +115,37 @@ def get_metadata(filename: pathlib.Path, do_file_size=True, do_checksum=True) ->
     This function is sprawling because it handles all the different cases, probably better to refactor
     """
     result = {}
-    # SBND
-    # common
-    result['group'] = 'sbnd'
-    result["sbnd_project.software"]: "sbndcode"
-    VERSION = 'v10_06_00_10'
 
-    # handle cases based on filename
-    fname = filename.stem
-    if fname.startswith('hist'):
-        raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
-    else:
-        # expect other files to have an associated .json file
-        meta_filename = metadata_file(filename)
-
-        if not meta_filename.is_file():
-            raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!.')
-
-        with open(meta_filename, 'r') as f:
-            result = json.load(f)
-
-        result['file_format'] = 'artroot'
-        result['file_type'] = 'data'
-        result['data_tier'] = 'reconstructed'
-        result['production.type'] = 'aurora'
-        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
-        result["icarus_project.version"]: VERSION
-        result["production.name"]: "offline"
-
-        if fname.startswith('reco1'):
-            raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
-        elif fname.startswith('reco2'):
-            result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
-            result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
-            result["icarus_project.stage"] = "stage1"
-            del result['parents']
-
-    """
-    # ICARUS
     # common
     result['group'] = 'icarus'
-    result["icarus_project.software"]: "icaruscode"
-    VERSION = 'v10_06_00_01p05'
+    result["icarus_project.software"] = "icaruscode"
+    result["production.name"] = 'Jan2026'
+    result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_06p03"
+    VERSION = 'v10_06_00_06p03'
 
     # handle cases based on filename
     fname = filename.stem
-    if fname.startswith('Supplemental'):
+    if fname.startswith('Supplemental') or fname.startswith('hists'):
         # no json file; we'll do our best to get metadata from the file name
         # this extracts the raw data filename from the hist file name
-        parent_name = '_'.join(filename.name.split('Supplemental-')[1].split('-stage1.root')[0].split('_')[:-1]) + '.root'
+        # old format
+        # parent_name = '_'.join(filename.name.split('Supplemental-')[1].split('-stage1.root')[0].split('_')[:-1]) + '.root'
 
-        result['file_type'] = 'data'
+        parent_name = filename.name.split('hists_')[1]
+
+        result['file_type'] = 'data' 
         result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
-        result['production.type'] = 'polaris'
-        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
+        result['production.type'] = 'aurora'
         result["icarus_project.version"]: VERSION
         if fname.endswith('stage0'):
-            result['file_format'] = 'purity'
+            result['file_format'] = 'purity' 
             result['application'] = { 'family': 'art', 'name': 'stage0', 'version': VERSION }
             result['parents'] = [{'file_name': parent_name}]
-        elif fname.endswith('stage1'):
-            result['file_format'] = 'calib_ntuples'
+        elif fname.startswith('hists_stage0'):
+            result['file_format'] = 'calib_ntuples' 
             result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
-            result['parents'] = [{'file_name': 'stage1-000-' + get_filename(filename.parent / parent_name).name}]
+            # result['parents'] = [{'file_name': 'stage1-000-' + get_filename(filename.parent / parent_name).name}]
+            result['parents'] = [{'file_name': parent_name}]
         else:
             raise RuntimeError(f"Metadata generation for file with name {fname} is not supported.")
     else:
@@ -183,31 +153,42 @@ def get_metadata(filename: pathlib.Path, do_file_size=True, do_checksum=True) ->
         meta_filename = metadata_file(filename)
 
         if not meta_filename.is_file():
-            raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!.')
+            raise MetadataNotFoundException(f'Tried to declare {filename} but {meta_filename} was not found!')
 
         with open(meta_filename, 'r') as f:
-            result = json.load(f)
-
-        result['file_format'] = 'artroot'
-        result['file_type'] = 'data'
+            try:
+                json_result = json.load(f)
+            except json.decoder.JSONDecodeError as e:
+                raise CouldNotParseMetadataException(f'Tried to declare {filename} but {meta_filename} was invalid!')
+            # apply global overrides to the metadata file, but otherwise use its values
+            json_result.update(result)
+            result = json_result
+        
+        result['file_format'] = 'artroot' 
+        result['file_type'] = 'data' 
         result['data_tier'] = 'reconstructed'
-        result['production.type'] = 'polaris'
-        result["icarus_project.name"]: "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_01p05"
-        result["icarus_project.version"]: VERSION
-        result["production.name"]: "offline"
+        result['production.type'] = 'aurora'
+        result["icarus_project.name"] = "icarus_2025_wcdnn_Run4_offbeam_v10_06_00_06p03"
+        result["icarus_project.version"] = VERSION
+        # result["production.name"] = "offline"
 
-        if fname.startswith('reco1'):
+        if fname.endswith('.caf'):
+            result['parents'] = [{'file_name': p['file_name'].replace('stage1-', '')} for p in result['parents']]
+        elif fname.startswith('stage0'):
             result['application'] = { 'family': 'art', 'name': 'stage0', 'version': VERSION }
-            result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
+            result['fcl.name'] = "stage0_run2_wcdnn_icarus_overlay.fcl"
             result["icarus_project.stage"] = "stage0"
-            result["data_stream"] = "bnbmajority"
+            result["data_stream"] = "offbeambnbminbias"
             result["art.process_name"] = "stage0"
-        elif fname.startswith('reco2'):
+            try:
+                del result["parents"]
+            except KeyError:
+                pass
+        elif fname.startswith('stage1'):
             result['application'] = { 'family': 'art', 'name': 'stage1_caf_larcv', 'version': VERSION }
             result['fcl.name'] = "stage0_run2_wcdnn_icarus.fcl"
             result["icarus_project.stage"] = "stage1"
             result['parents'][0]['file_name'] = result['parents'][0]['file_name'].replace('reco1', 'stage0')
-    """
 
     # file name replacements
     result['file_name'] = get_filename(filename).name
@@ -351,6 +332,10 @@ def _declare_callback(_file_queue: multiprocessing.Queue, _declare_queue: multip
             logger.warning(f'{pid=} Skipping {item}, file not found ({e}).')
             _declare_queue.put(HEARTBEAT)
             nskip += 1
+        except CouldNotParseMetadataException as e:
+            logger.warning(f'{pid=} Skipping {item}, metadata invalid ({e}).')
+            _declare_queue.put(HEARTBEAT)
+            nskip += 1
 
         last_request = datetime.now()
         dt = (last_request - now).total_seconds()
@@ -381,7 +366,7 @@ def main(args: dict) -> None:
         raise RuntimeError(f'Recusive mode requested but {filename} is not a directory.')
 
     tstart = datetime.now()
-    # reco2/stage1: declare json file, don't transfer the file
+    # stage1: declare json file, don't transfer the file
     # files = filename.rglob('*json')
     files = filename.rglob('*[!json]')
     nprocesses = 0
@@ -405,13 +390,20 @@ def main(args: dict) -> None:
             continue
         if f.name.startswith('Supplemental'):
             continue
+        # if not f.name.startswith('hists'):
+        #     continue
+
+        # check last modified time. Make sure file has not been modified in
+        # last hour in case the file is mid-transfer
+        tdelta = (datetime.now(timezone.utc) - datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)).total_seconds()
+        if tdelta < 3600:
+            continue
+
         logger.debug(f'adding {f}')
         stage1_fname = f.with_suffix('')
         nfiles_reset += 1
         nfiles += 1
         file_queue.put(f)
-
-        # for reco2/stage1
         # file_queue.put(stage1_fname)
 
         # spawn a new process for files until we reach the max number

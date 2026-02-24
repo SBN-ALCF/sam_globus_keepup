@@ -32,7 +32,7 @@ class GLOBUSSessionManager:
 
         # auth_client is only needed for native app authorization, i.e., not
         # needed for a services account (see _get_transfer_client method)
-        # self.auth_client = globus_sdk.NativeAppAuthClient(client_id)
+        self.auth_client = globus_sdk.NativeAppAuthClient(client_id)
 
         self.client = None
         self.src_endpoint = src_endpoint
@@ -40,6 +40,7 @@ class GLOBUSSessionManager:
         self.token_data = {}
         self._task_data = None
         self._rm_task_data = None
+        self._rm_list = []
         self._last_task_id = None
         self._thread = None
         self._running = False
@@ -68,6 +69,7 @@ class GLOBUSSessionManager:
         """Get tokens via web authentication, then read token data to construct
         transfer client with proper authorization."""
 
+        '''
         client_id = check_env("GLOBUS_API_CLIENT_ID")
         client_secret = check_env("GLOBUS_APP_SECRET")
         app = globus_sdk.ClientApp(
@@ -97,7 +99,6 @@ class GLOBUSSessionManager:
         )
 
         return globus_sdk.TransferClient(authorizer=authorizer)
-        '''
 
     def _required_scopes(self, target: str) -> List:
         """Try to perform an `ls` of the endpoint to check which scopes are needed to access it."""
@@ -128,6 +129,7 @@ class GLOBUSSessionManager:
 
         self._task_data.add_item(str(file_src), str(file_dest))
         self._rm_task_data.add_item(str(file_src))
+        self._rm_list.append(file_src)
 
     def clear_task(self) -> None:
         """Reset task data. Currently this just clears the reference."""
@@ -136,6 +138,7 @@ class GLOBUSSessionManager:
 
         self._task_data = None
         self._rm_task_data = None
+        self._rm_list = []
 
     def submit(self) -> str:
         if self._task_data is None:
@@ -151,12 +154,13 @@ class GLOBUSSessionManager:
         # start setting up next task
         task_data = copy.copy(self._task_data)
         rm_task_data = copy.copy(self._rm_task_data)
+        rm_list = copy.copy(self._rm_list)
         self.clear_task()
 
-        self._thread = threading.Thread(target=self._threaded_submit, args=(task_data, rm_task_data))
+        self._thread = threading.Thread(target=self._threaded_submit, args=(task_data, rm_task_data, rm_list))
         self._thread.start()
 
-    def _threaded_submit(self, task_data, rm_task_data):
+    def _threaded_submit(self, task_data, rm_task_data, rm_list):
         """Do submission in a thread so we can wait between transfer & cleanup."""
 
         # this can fail in rare cases. Solution is to renew the client
@@ -183,10 +187,17 @@ class GLOBUSSessionManager:
             return
 
         logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
+        '''
         rm_task_doc = self.client.submit_delete(rm_task_data)
         rm_task_id = rm_task_doc["task_id"]
 
         self.wait(task_id=rm_task_id)
+        '''
+        for f in rm_list:
+            try:
+                f.unlink()
+            except Exception as e:
+                logger.warning(f'{e}')
         self._running = False
 
     def wait(self, task_id=None):
