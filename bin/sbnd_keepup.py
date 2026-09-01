@@ -139,8 +139,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
             if nfiles_outstanding >= GLOBUS_NFILE_MAX:
                 logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
                 globus_session.submit()
-                time.sleep(10)
-                globus_session.wait()
+                globus_session.join()
                 nfiles_outstanding = 0
             elif nfiles_outstanding == 0:
                 logger.info("No outstanding files.")
@@ -172,9 +171,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
                     if (nsleep > 10 and not sam_project.running()) or nsleep > 1000:
                         logger.debug(f"Transferring outstanding files and exiting!")
                         globus_session.submit()
-                        # prevents wait call from happening before submission is finished 
-                        time.sleep(10)
-                        globus_session.wait()
+                        globus_session.join()
                         break
 
                     logger.debug(f"No queued files. GLOBUS sleeping {nsleep=}")

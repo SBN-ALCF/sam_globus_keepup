@@ -95,6 +95,13 @@ class GLOBUSSessionManager:
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
+        # Reconcile + unlink happen at the tail of the submission thread. Join
+        # it here so that work finishes inside the context manager instead of
+        # at interpreter shutdown, where its log lines land after everything
+        # else and look like they belong to a later run.
+        if not self.join(timeout=TASK_TIMEOUT_S + SUBMIT_TIMEOUT_S):
+            logger.warning('Submission thread still running at exit; cleanup may '
+                           'complete after this point.')
         logger.info('Bye.')
 
     def _get_transfer_client(self, scopes=TransferScopes.all):
@@ -334,7 +341,12 @@ class GLOBUSSessionManager:
             logger.warning(f'{n_left}/{len(rm_list)} files from {task_id} remain on scratch.')
 
     def wait(self, task_id=None):
-        """Sleep until task is completed. If no task ID, use the last submission ID."""
+        """Sleep until task is completed. If no task ID, use the last submission ID.
+
+        Called by the submission thread for its own task. Callers on the main
+        thread should use join() instead, which also covers cleanup and does
+        not add a second poller (see join()).
+        """
         if task_id is None and self._last_task_id is None:
             logger.warning('Tried to wait on a task but the task ID was not specified and there was no last task.')
             return
@@ -361,6 +373,23 @@ class GLOBUSSessionManager:
                 )
                 self.client.cancel_task(task_id)
                 return
+
+    def join(self, timeout=None) -> bool:
+        """Block until the in-flight submission has fully finished.
+
+        The submission thread waits on its task and then reconciles and
+        unlinks, so joining it covers the whole operation. Prefer this over
+        wait(): calling wait() from another thread puts a second poller on the
+        same task, doubles the polling traffic, uses one TransferClient from
+        two threads at once, and returns before cleanup has run.
+
+        Returns True if nothing is still running.
+        """
+        t = self._thread
+        if t is None:
+            return True
+        t.join(timeout)
+        return not t.is_alive()
 
     def running(self):
         return self._running
