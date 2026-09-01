@@ -8,7 +8,6 @@ import ifdh
 import samweb_client
 
 IFDH_Client = ifdh.ifdh()
-SAMWeb_Client = samweb_client.SAMWebClient()
 
 
 import os
@@ -16,3 +15,5 @@ try:
     EXPERIMENT = os.environ["EXPERIMENT"]
 except KeyError:
     raise RuntimeError("Must set EXPERIMENT environment variable.")
+
+SAMWeb_Client = samweb_client.SAMWebClient(experiment=EXPERIMENT)

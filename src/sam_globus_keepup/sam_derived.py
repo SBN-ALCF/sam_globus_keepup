@@ -119,7 +119,7 @@ class SAMProjectManager(IFDHProjectManager):
         file is added to this object's queue.
         """
         # url, appname, appversion, dest, user
-        process_id = self._client.establishProcess(self._url, "dummy", "dummy", "dummy", self._sam_user) #, schemas="http")
+        process_id = self._client.establishProcess(self._url, "demo", "demo", "demo", self._sam_user) #, schemas="http")
         while True:
             next_file = self._client.getNextFile(self._url, process_id)
             if not next_file:
