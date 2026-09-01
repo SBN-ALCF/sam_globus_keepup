@@ -103,8 +103,8 @@ def main_loop(client_id, src_endpoint, dest_endpoint):
         logger.debug(f"Checking for outstanding files at {SCRATCH_PATH}...")
         nfiles_outstanding = 0 
         for f in SCRATCH_PATH.glob('**/*.root'):
-            src, dest = scratch_eagle_paths(f)
-            globus_session.add_file(src, dest)
+            _, dest = scratch_eagle_paths(f)
+            globus_session.add_file(f, dest)
             nfiles_outstanding += 1
             if nfiles_outstanding >= GLOBUS_NFILE_MAX:
                 logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")

@@ -113,7 +113,7 @@ def main(args):
 
     main_loop(
         client_id, src_endpoint, args.endpoint, args.destination, 
-        args.dataset, args.project[0], pathlib.Path(args.scratch_dir[0])
+        args.dataset, args.project, pathlib.Path(args.scratch_dir)
     )
 
     if args.network_monitor:
@@ -133,8 +133,8 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
         logger.debug(f"Checking for outstanding files at {scratch_path}...")
         nfiles_outstanding = 0 
         for f in scratch_path.glob('**/*.root'):
-            src, dest = scratch_eagle_paths(f, scratch_path, dest_path)
-            globus_session.add_file(src, dest)
+            _, dest = scratch_eagle_paths(f, scratch_path, dest_path)
+            globus_session.add_file(f, dest)
             nfiles_outstanding += 1
             if nfiles_outstanding >= GLOBUS_NFILE_MAX:
                 logger.info(f"Starting transfer of {globus_session.task_nfiles} to dest: {EAGLE_PATH}")
@@ -227,8 +227,8 @@ if __name__ == '__main__':
     parser.add_argument('dataset', help='SAM dataset to transfer')
     parser.add_argument('endpoint', help='GLOBUS destination endpoint UUID')
     parser.add_argument('destination', help='Destination path relative to GLOBUS endpoint')
-    parser.add_argument('--project', help='Override the default SAM project base name. Files will be transferred again if they were previously transferred under a different project.', nargs=1, default=SAM_PROJECT_BASE)
-    parser.add_argument('--scratch-dir', help='Override the default scratch directory', nargs=1, default='/ceph/sbnd')
+    parser.add_argument('--project', help='Override the default SAM project base name. Files will be transferred again if they were previously transferred under a different project.', default=SAM_PROJECT_BASE)
+    parser.add_argument('--scratch-dir', help='Override the default scratch directory', default='/ceph/sbnd')
     parser.add_argument('--network-monitor', action='store_true', help='Enable network monitoring')
     args = parser.parse_args()
     main(args)

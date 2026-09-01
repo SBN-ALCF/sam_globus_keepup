@@ -59,6 +59,7 @@ class GLOBUSSessionManager:
         self._task_data = None
         self._rm_task_data = None
         self._rm_list = []
+        self._batch_keys = set()
         self._last_task_id = None
         self._thread = None
         self._running = False
@@ -147,17 +148,42 @@ class GLOBUSSessionManager:
                 src, dest = line.split()
                 self.add_file(pathlib.PurePosixPath(src), pathlib.PurePosixPath(dest))
 
-    def add_file(self, file_src: pathlib.PurePosixPath, file_dest: pathlib.PurePosixPath) -> None:
-        """Add file to transfer to the current task."""
+    def add_file(self, file_src: pathlib.PurePosixPath, file_dest: pathlib.PurePosixPath) -> bool:
+        """Add file to transfer to the current task.
+
+        Returns True if the file was added. A source that is missing, empty or
+        already queued is rejected here: GLOBUS retries an unreadable source
+        path rather than failing it, so a single bad entry stalls the whole
+        task and every file batched behind it.
+        """
+        # keep a concrete Path so the existence check and the later unlink work
+        src = pathlib.Path(file_src)
+
+        if str(src) in self._batch_keys:
+            logger.warning(f'Not adding {src}: already queued in this task.')
+            return False
+
+        try:
+            if not src.is_file():
+                logger.warning(f'Not adding {src}: source is missing.')
+                return False
+            if src.stat().st_size == 0:
+                logger.warning(f'Not adding {src}: source is empty.')
+                return False
+        except OSError as e:
+            logger.warning(f'Not adding {src}: could not stat source ({e}).')
+            return False
 
         # start a new task if we don't have one yet
         if self._task_data is None:
             self._task_data = globus_sdk.TransferData(source_endpoint=self.src_endpoint, destination_endpoint=self.dest_endpoint)
             self._rm_task_data = globus_sdk.DeleteData(endpoint=self.src_endpoint)
 
-        self._task_data.add_item(str(file_src), str(file_dest))
-        self._rm_task_data.add_item(str(file_src))
-        self._rm_list.append(file_src)
+        self._task_data.add_item(str(src), str(file_dest))
+        self._rm_task_data.add_item(str(src))
+        self._rm_list.append(src)
+        self._batch_keys.add(str(src))
+        return True
 
     def clear_task(self) -> None:
         """Reset task data. Currently this just clears the reference."""
@@ -167,6 +193,7 @@ class GLOBUSSessionManager:
         self._task_data = None
         self._rm_task_data = None
         self._rm_list = []
+        self._batch_keys = set()
 
     def submit(self) -> str:
         if self._task_data is None:
@@ -198,8 +225,15 @@ class GLOBUSSessionManager:
             if not err.info.consent_required:
                 raise err
 
+            if not self._use_services:
+                # Native app authorization prompts on stdin (see
+                # _get_transfer_client). Calling that from this worker thread
+                # blocks it forever!
+                logger.critical(CONSENT_REQ_ERR_MSG)
+                raise RuntimeError(CONSENT_REQ_ERR_MSG) from err
+
+            # a services account renews without any console interaction
             logger.warning(CONSENT_REQ_ERR_MSG)
-            print(CONSENT_REQ_ERR_MSG)
             self.client = self._get_transfer_client(scopes=err.info.consent_required.required_scopes)
             task_doc = self.client.submit_transfer(task_data)
         
