@@ -31,13 +31,13 @@ logger = logging.getLogger(__name__)
 SAM_PROJECT_BASE = 'globus_dtn_xfer'
 # SAM_DATASET = "sbnd_keepup_from_19549_raw_Oct27"
 
-SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
+# SCRATCH_PATH = pathlib.Path('/ceph/sbnd/rawdata')
 
 # this version is for the guest collection which has /neutrinoGPU/sbnd/data at the root
 EAGLE_PATH = pathlib.PurePosixPath('/data')
 
 BUFFER_KB = 100 * 1024 * 1024 
-GLOBUS_NFILE_MAX = 500
+GLOBUS_NFILE_MAX = 2000
 
 
 def hash_path(filename: pathlib.Path, n: int=1):
@@ -66,7 +66,7 @@ def ifdh_cp_scratch(fname: str, dest_base: Optional[pathlib.Path]=None, dest_is_
 
     if dest_is_dir:
         # directory based on run number from file name
-        dest = dest_base / hash_path(fname, n=2)
+        dest = pathlib.Path(dest_base / hash_path(fname, n=2))
         dest.mkdir(parents=True, exist_ok=True)
 
     IFDH_Client.cp([fname, str(dest)])
@@ -77,7 +77,7 @@ def eagle_run_path(run_number: int) -> pathlib.PurePosixPath:
     return pathlib.PurePosixPath(*[f'{p * int(run_number / p):06d}' for p in (1000, 100, 1)])
 
 
-def scratch_eagle_paths(filename: str, scratch_path: pathlib.Path, eagle_path: pathlib.Path):
+def scratch_eagle_paths_run_number(filename: str, scratch_path: pathlib.Path, eagle_path: pathlib.Path):
     """Return corresponding paths on both scratch and eagle for filename."""
     result = SBND_RAWDATA_REGEXP.match(str(filename))
     run_number = int(result.groups()[0])
@@ -88,6 +88,15 @@ def scratch_eagle_paths(filename: str, scratch_path: pathlib.Path, eagle_path: p
     eagle_dest = eagle_path / eagle_run_path(run_number)
     return srcdir / f_basename, eagle_dest / f_basename
 
+
+def scratch_eagle_paths(filename: str, scratch_path: pathlib.Path, eagle_path: pathlib.Path):
+    """Return corresponding paths on both scratch and eagle for filename."""
+    srcdir = scratch_path / hash_path(filename, n=2)
+
+    f_basename = pathlib.PurePath(filename).name
+
+    eagle_dest = eagle_path / hash_path(filename, n=2)
+    return srcdir / f_basename, eagle_dest / f_basename
 
 def main(args):
     check_env("IFDH_PROXY_ENABLE", '0')
@@ -104,7 +113,7 @@ def main(args):
 
     main_loop(
         client_id, src_endpoint, args.endpoint, args.destination, 
-        args.dataset, args.project, args.scratch_dir
+        args.dataset, args.project[0], pathlib.Path(args.scratch_dir[0])
     )
 
     if args.network_monitor:
@@ -121,10 +130,10 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
         # this will throw if the path doesn't exist
         globus_session.ls(path=dest_path)
 
-        logger.debug(f"Checking for outstanding files at {SCRATCH_PATH}...")
+        logger.debug(f"Checking for outstanding files at {scratch_path}...")
         nfiles_outstanding = 0 
-        for f in SCRATCH_PATH.glob('**/*.root'):
-            src, dest = scratch_eagle_paths(f)
+        for f in scratch_path.glob('**/*.root'):
+            src, dest = scratch_eagle_paths(f, scratch_path, dest_path)
             globus_session.add_file(src, dest)
             nfiles_outstanding += 1
             if nfiles_outstanding >= GLOBUS_NFILE_MAX:
@@ -180,7 +189,7 @@ def main_loop(client_id, src_endpoint, dest_endpoint, dest_path, dataset, projec
                 globus_session.add_file(src, dest)
 
                 # don't start a new transfer until we have BUFFER_KB of data
-                # if du(SCRATCH_PATH) < BUFFER_KB or globus_session.running():
+                # if du(scratch_path) < BUFFER_KB or globus_session.running():
                 if nfiles < GLOBUS_NFILE_MAX:
                     logger.debug(f"GLOBUS: Waiting for {GLOBUS_NFILE_MAX} files ({nfiles=})")
                     continue
