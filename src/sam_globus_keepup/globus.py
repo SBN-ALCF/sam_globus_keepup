@@ -172,8 +172,10 @@ class GLOBUSSessionManager:
         # keep a concrete Path so the existence check and the later unlink work
         src = pathlib.Path(file_src)
 
-        if str(src) in self._batch_keys:
-            logger.warning(f'Not adding {src}: already queued in this task.')
+        # This is reachable whenever a leftover under an older scratch layout
+        # is also re-delivered by SAM into the current one.
+        if src.name in self._batch_keys:
+            logger.warning(f'Not adding {src}: {src.name} is already queued in this task.')
             return False
 
         try:
@@ -190,12 +192,14 @@ class GLOBUSSessionManager:
         # start a new task if we don't have one yet
         if self._task_data is None:
             self._task_data = globus_sdk.TransferData(source_endpoint=self.src_endpoint, destination_endpoint=self.dest_endpoint)
+            # kept in sync with _task_data for a possible future server-side
+            # delete; cleanup currently unlinks locally in _submit_and_clean
             self._rm_task_data = globus_sdk.DeleteData(endpoint=self.src_endpoint)
 
         self._task_data.add_item(str(src), str(file_dest))
         self._rm_task_data.add_item(str(src))
         self._rm_list.append(src)
-        self._batch_keys.add(str(src))
+        self._batch_keys.add(src.name)
         return True
 
     def clear_task(self) -> None:
@@ -274,23 +278,60 @@ class GLOBUSSessionManager:
         logger.info(f"Submitted transfer, task_id={task_id}")
         self.wait(task_id=task_id)
 
-        task = self.client.task_list(filter={'task_id': task_id})['DATA'][0]
-        if 'SUCCEEDED' not in task['status']:
-            logger.warning(f"Transfer task with {task_id=} failed! Returning....")
-            return
+        task = self.client.get_task(task_id)
+        status = task['status']
+        logger.info(f"Transfer task with {task_id=} ended with status {status}. Cleaning up...")
 
-        logger.info(f"Transfer task with {task_id=} finished. Cleaning up...")
-        '''
-        rm_task_doc = self.client.submit_delete(rm_task_data)
-        rm_task_id = rm_task_doc["task_id"]
+        # Delete only what GLOBUS confirms it moved, rather than trusting the
+        # task status directly.  However, the per-file list is paginated, which
+        # costs one API call per page and makes each page a chance to fail. The
+        # task document already reports how many files moved, so when that
+        # count accounts for the whole batch we can skip the pages.
+        n_files = len(rm_list)
+        n_transferred = task.get('files_transferred')
+        n_skipped = (task.get('files_skipped') or 0) + (task.get('subtasks_skipped_errors') or 0)
 
-        self.wait(task_id=rm_task_id)
-        '''
+        if status == 'SUCCEEDED' and n_transferred == n_files and n_skipped == 0:
+            logger.info(f'{task_id} moved all {n_files} files; cleaning up without enumerating.')
+            transferred = {str(f) for f in rm_list}
+        else:
+            logger.info(
+                f'{task_id}: reports {n_transferred} of {n_files} transferred, {n_skipped} '
+                f'skipped, status {status}. Enumerating to find which files moved.'
+            )
+            # Must go through .paginated
+            transferred = {
+                item["source_path"]
+                for item in self.client.paginated.task_successful_transfers(task_id).items()
+            }
+
+            # If the enumeration disagrees with the task's own count then the
+            # list is incomplete and we cannot tell which files are safe to
+            # remove. Leave the whole batch for the next run rather than guess.
+            if n_transferred is not None and len(transferred) != n_transferred:
+                logger.error(
+                    f'{task_id}: enumerated {len(transferred)} transfers but the task reports '
+                    f'{n_transferred}. Deleting nothing; {n_files} files stay on scratch.'
+                )
+                return
+
+        n_left = 0
         for f in rm_list:
+            if str(f) not in transferred:
+                n_left += 1
+                logger.warning(
+                    f'{f} was not confirmed transferred by {task_id}; leaving it on scratch.'
+                )
+                continue
             try:
                 f.unlink()
+            except FileNotFoundError:
+                pass
             except Exception as e:
                 logger.warning(f'{e}')
+
+        if n_left:
+            logger.warning(f'{n_left}/{len(rm_list)} files from {task_id} remain on scratch.')
 
     def wait(self, task_id=None):
         """Sleep until task is completed. If no task ID, use the last submission ID."""
