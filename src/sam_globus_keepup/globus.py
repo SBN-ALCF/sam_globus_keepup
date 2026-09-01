@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 CONSENT_REQ_ERR_MSG = "Encountered a ConsentRequired error: You must login a second time to grant consents."
 
+# how long wait() will block for the submission thread to report a task ID
+SUBMIT_TIMEOUT_S = 600
+
+# Poll interval and overall ceiling for a single transfer task. GLOBUS retries
+# an unreadable source path instead of failing it, so without a ceiling a task
+# that references one missing file never reaches a terminal state and the
+# transfer manager waits on it forever. TASK_TIMEOUT_S must comfortably exceed
+# how long a full GLOBUS_NFILE_MAX batch takes on your link.
+TASK_POLL_S = 60
+TASK_TIMEOUT_S = 2 * 3600
+
 
 class GLOBUSSessionManager:
     """ContextManager for GLOBUS transfers."""
@@ -63,6 +74,8 @@ class GLOBUSSessionManager:
         self._last_task_id = None
         self._thread = None
         self._running = False
+        # set once the submission thread has a task ID to report
+        self._submitted = threading.Event()
 
         logger.info(f'{self.src_endpoint=} {self.dest_endpoint=}')
 
@@ -212,10 +225,28 @@ class GLOBUSSessionManager:
         rm_list = copy.copy(self._rm_list)
         self.clear_task()
 
+        self._running = True
+        self._submitted.clear()
+        self._last_task_id = None
+
         self._thread = threading.Thread(target=self._threaded_submit, args=(task_data, rm_task_data, rm_list))
         self._thread.start()
 
     def _threaded_submit(self, task_data, rm_task_data, rm_list):
+        """Wrapper that guarantees the running flag is released."""
+        try:
+            self._submit_and_clean(task_data, rm_task_data, rm_list)
+        except Exception:
+            # an unhandled exception in a bare thread is invisible, and the
+            # batch has already been cleared from _task_data by submit()
+            logger.exception(f'Transfer thread failed. {len(rm_list)} files left on scratch.')
+        finally:
+            # Must always run. Returning with _running still set stalls the
+            # main loop permanently and files pile up on scratch.
+            self._running = False
+            self._submitted.set()
+
+    def _submit_and_clean(self, task_data, rm_task_data, rm_list):
         """Do submission in a thread so we can wait between transfer & cleanup."""
 
         # this can fail in rare cases. Solution is to renew the client
@@ -237,9 +268,9 @@ class GLOBUSSessionManager:
             self.client = self._get_transfer_client(scopes=err.info.consent_required.required_scopes)
             task_doc = self.client.submit_transfer(task_data)
         
-        self._running = True
         task_id = task_doc["task_id"]
         self._last_task_id = task_id
+        self._submitted.set()
         logger.info(f"Submitted transfer, task_id={task_id}")
         self.wait(task_id=task_id)
 
@@ -260,7 +291,6 @@ class GLOBUSSessionManager:
                 f.unlink()
             except Exception as e:
                 logger.warning(f'{e}')
-        self._running = False
 
     def wait(self, task_id=None):
         """Sleep until task is completed. If no task ID, use the last submission ID."""
@@ -269,11 +299,27 @@ class GLOBUSSessionManager:
             return
 
         if task_id is None:
+            # The ID is assigned by the submission thread. Without this the
+            # caller reads None and returns immediately
+            if not self._submitted.wait(timeout=SUBMIT_TIMEOUT_S):
+                logger.warning(f'Timed out after {SUBMIT_TIMEOUT_S}s waiting for a task ID.')
             task_id = self._last_task_id
+            if task_id is None:
+                logger.warning('Submission did not produce a task ID; nothing to wait on.')
+                return
 
         logger.info(f"Waiting on {task_id=}")
-        while not self.client.task_wait(task_id, timeout=60):
-            logger.info(f"Waiting on {task_id=}")
+        waited = 0
+        while not self.client.task_wait(task_id, timeout=TASK_POLL_S):
+            waited += TASK_POLL_S
+            logger.info(f"Waiting on {task_id=} ({waited}s elapsed)")
+            if waited >= TASK_TIMEOUT_S:
+                logger.error(
+                    f"Task {task_id} did not finish within {TASK_TIMEOUT_S}s. Cancelling it; "
+                    "check the GLOBUS console for per-file errors."
+                )
+                self.client.cancel_task(task_id)
+                return
 
     def running(self):
         return self._running
